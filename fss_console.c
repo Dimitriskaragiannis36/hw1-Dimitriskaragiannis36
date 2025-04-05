@@ -54,7 +54,7 @@ int main() {
         ssize_t bytes_read = read(pipe_out_fd, response, sizeof(response) - 1);
         if (bytes_read > 0) {
             response[bytes_read] = '\0';
-            printf("Response: %s\n", response);
+            printf("%s\n", response);
         } else {
             printf("No response from manager.\n");
         }

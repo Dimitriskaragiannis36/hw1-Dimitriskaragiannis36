@@ -10,6 +10,7 @@
 #define DEFAULT_WORKER_LIMIT 5
 #define PIPE_IN "fss_in"  
 #define PIPE_OUT "fss_out"
+#define MAX_CMD_LEN 256
 
 void print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s -l <logfile> -c <config_file> -n <worker_limit>\n", progname);
@@ -95,12 +96,12 @@ int main(int argc, char *argv[]) {
     //οι εντολές από fss_console
     char command[MAX_CMD_LEN];
     while (1) {
-        ssize_t bytes = read(PIPE_IN, command, sizeof(command) - 1);
+        ssize_t bytes = read(fd_in, command, sizeof(command) - 1);
         if (bytes <= 0) continue;
 
         command[bytes] = '\0';
 
-        handle_command(command, PIPE_OUT);
+        handle_command(command, fd_out, fd_in, log_fd);
 
         if (strncmp(command, "shutdown", 8) == 0) {
             break;

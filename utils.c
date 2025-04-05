@@ -101,9 +101,10 @@ void close_log_file() {
     }
 }
 
-void handle_command(const char *cmd, int pipe_out_fd) {
-    char response[512];
-    char log_entry[512];
+void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
+ {
+    char response[1024]; 
+    char log_entry[1024];
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     char timebuf[64];
@@ -205,6 +206,80 @@ void handle_command(const char *cmd, int pipe_out_fd) {
             write(pipe_out_fd, response, strlen(response));
         }
     }
+    else if (strncmp(cmd, "sync ", 5) == 0) {
+        char src[256];
+        sscanf(cmd + 5, "%255s", src);
+        sync_info_mem_store *curr = sync_list_head;
+        int found = 0;
+        while (curr) {
+            if (strcmp(curr->source_dir, src) == 0) {
+                found = 1;
+                if (curr->is_syncing) {
+                    snprintf(response, sizeof(response),
+                             "%s Sync already in progress %s\n", timebuf, src);
+                    write(pipe_out_fd, response, strlen(response));
+                } else {
+                    //δοκιμαστικό sync
+                    curr->is_syncing = 1;
+                    snprintf(response, sizeof(response),
+                             "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
+                    write(pipe_out_fd, response, strlen(response));
+                    snprintf(log_entry, sizeof(log_entry),
+                             "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
+                    write(log_fd, log_entry, strlen(log_entry));
+    
+                    //προσομοίωση χρόνου sync
+                    sleep(2);  
+                    curr->last_sync_time = time(NULL);
+                    curr->is_syncing = 0;
+    
+                    now = time(NULL);
+                    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                    snprintf(response, sizeof(response),
+                             "%s Sync completed %s -> %s Errors:%d\n",
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
+                    write(pipe_out_fd, response, strlen(response));
+                    snprintf(log_entry, sizeof(log_entry),
+                             "%s Sync completed %s -> %s Errors:%d\n",
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
+                    write(log_fd, log_entry, strlen(log_entry));
+                }
+                break;
+            }
+            curr = curr->next;
+        }
+        if (!found) {
+            snprintf(response, sizeof(response),
+                     "%s Directory not monitored: %s\n", timebuf, src);
+            write(pipe_out_fd, response, strlen(response));
+        }
+    }
+    else if (strncmp(cmd, "shutdown", 8) == 0) {
+        //στέλνει μόνο στην οθόνη (fss_out)
+        snprintf(response, sizeof(response),
+                 "%s Shutting down manager...\n"
+                 "%s Waiting for all active workers to finish.\n"
+                 "%s Processing remaining queued tasks.\n",
+                 timebuf, timebuf, timebuf);
+        write(pipe_out_fd, response, strlen(response));
+    
+        
+        
+        sleep(1); 
+        sleep(1); 
+        now = time(NULL);
+        strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+        snprintf(response, sizeof(response),
+                 "%s Manager shutdown complete.\n", timebuf);
+        write(pipe_out_fd, response, strlen(response));
+
+        close(pipe_in_fd);
+        close(pipe_out_fd);
+        unlink(PIPE_IN);
+        unlink(PIPE_OUT);
+        close(log_fd);
+    }
+    
     
     
 }
