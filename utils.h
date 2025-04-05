@@ -3,6 +3,9 @@
 
 #include <time.h>
 
+#define PIPE_IN "fss_in"
+#define PIPE_OUT "fss_out"
+
 typedef struct sync_info_mem_store {
     char source_dir[256];
     char target_dir[256];

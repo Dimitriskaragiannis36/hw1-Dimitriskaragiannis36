@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <stdio.h>
+#include <errno.h>
 #include "utils.h"
 
 sync_info_mem_store *sync_list_head = NULL;
