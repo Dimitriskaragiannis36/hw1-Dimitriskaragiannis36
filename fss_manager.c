@@ -4,6 +4,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include "utils.h" 
 
 #define DEFAULT_WORKER_LIMIT 5
@@ -41,6 +42,9 @@ int main(int argc, char *argv[]) {
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
+
+    // καθαρίζω logfiles και named pipes
+    cleanup_previous_state(manager_logfile);
 
     //ανοίγω manager_logfile
     int log_fd = open(manager_logfile, O_WRONLY | O_APPEND | O_CREAT, 0644);  

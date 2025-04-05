@@ -64,3 +64,17 @@ void load_config_file(const char *config_path) {
 
     close(fd);
 }
+
+void cleanup_previous_state(const char *logfile) {
+    //καθαρίζω τα named pipes
+    unlink(PIPE_IN);
+    unlink(PIPE_OUT);
+
+    //καθαρίζω αρχείο - το κάνω κενό με truncate
+    int fd = open(logfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        perror("logfile cleanup");
+        exit(EXIT_FAILURE);
+    }
+    close(fd);
+}

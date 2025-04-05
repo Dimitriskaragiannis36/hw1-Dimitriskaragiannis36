@@ -16,5 +16,6 @@ extern sync_info_mem_store *sync_list_head;
 extern int log_fd;
 
 void load_config_file(const char *config_path);
+void cleanup_previous_state(const char *logfile);
 
 #endif // UTILS_H
