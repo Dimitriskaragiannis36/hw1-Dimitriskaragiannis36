@@ -24,6 +24,6 @@ void cleanup_previous_state(const char *logfile);
 
 void free_sync_list();
 void close_log_file();
-void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd);
+int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd);
 void perform_initial_sync(const char *src, const char *dst);
 #endif //UTILS_H

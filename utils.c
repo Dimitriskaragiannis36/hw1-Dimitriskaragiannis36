@@ -68,6 +68,7 @@ void load_config_file(const char *config_path) {
 
 void cleanup_previous_state(const char *logfile) {
     //καθαρίζω τα named pipes
+
     if (unlink(PIPE_IN) == -1 && errno != ENOENT) {
         perror("Error unlinking PIPE_IN");
     }
@@ -101,13 +102,14 @@ void close_log_file() {
     }
 }
 
-void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
+int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
  {
     char response[1024]; 
     char log_entry[1024];
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     char timebuf[64];
+    char last_sync_buf[64];
     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", tm_info);
 
     if (strncmp(cmd, "add ", 4) == 0) {
@@ -121,7 +123,7 @@ void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd
                     snprintf(response, sizeof(response),
                              "%s Already in queue: %s\n", timebuf, src);
                     write(pipe_out_fd, response, strlen(response));
-                    return;
+                    return 0;
                 }
                 curr = curr->next;
             }
@@ -182,17 +184,18 @@ void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd
         while (curr) {
             if (strcmp(curr->source_dir, src) == 0) {
                 found = 1;
+                strftime(last_sync_buf, sizeof(last_sync_buf), "%Y-%m-%d %H:%M:%S", localtime(&curr->last_sync_time));
                 snprintf(response, sizeof(response),
                          "%s Status requested for %s\n"
                          "Directory: %s\n"
                          "Target: %s\n"
-                         "Last Sync: %s"
+                         "Last Sync: %s\n"
                          "Errors: %d\n"
                          "Status: %s\n",
                          timebuf, src,
                          curr->source_dir,
                          curr->target_dir,
-                         asctime(localtime(&curr->last_sync_time)),
+                         last_sync_buf,
                          curr->error_count,
                          curr->active ? "Active" : "Inactive");
                 write(pipe_out_fd, response, strlen(response));
@@ -265,23 +268,18 @@ void handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd
     
         
         
-        sleep(1); 
-        sleep(1); 
+        //sleep(1); 
+        //sleep(1); 
         now = time(NULL);
         strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
         snprintf(response, sizeof(response),
                  "%s Manager shutdown complete.\n", timebuf);
         write(pipe_out_fd, response, strlen(response));
 
-        close(pipe_in_fd);
-        close(pipe_out_fd);
-        unlink(PIPE_IN);
-        unlink(PIPE_OUT);
-        close(log_fd);
+        return 1;
     }
     
-    
-    
+return 0;  
 }
 
 void perform_initial_sync(const char *src, const char *dst) {

@@ -50,13 +50,21 @@ int main() {
         }
 
         //απάντηση από fss_manager
-        char response[512];
+        char response[1024];
         ssize_t bytes_read = read(pipe_out_fd, response, sizeof(response) - 1);
         if (bytes_read > 0) {
             response[bytes_read] = '\0';
             printf("%s\n", response);
+        
+            // αν είναι shutdown, τερμάτισε αφού διαβάσεις την απάντηση
+            if (strncmp(command, "shutdown", 8) == 0) {
+                break;
+            }
         } else {
             printf("No response from manager.\n");
+            if (strncmp(command, "shutdown", 8) == 0) {
+                break;
+            }
         }
     }
 

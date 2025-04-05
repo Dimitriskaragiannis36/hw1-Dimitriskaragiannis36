@@ -101,14 +101,18 @@ int main(int argc, char *argv[]) {
 
         command[bytes] = '\0';
 
-        handle_command(command, fd_out, fd_in, log_fd);
-
-        if (strncmp(command, "shutdown", 8) == 0) {
+        if (handle_command(command, fd_out, fd_in, log_fd)) {
+            close(fd_in);
+            close(fd_out);
+            unlink(PIPE_IN);
+            unlink(PIPE_OUT);
+            close(log_fd);
             break;
         }
+        
     }
 
-    //αρχικός συγχρονισμός
+    /*αρχικός συγχρονισμός
     sync_info_mem_store *curr = sync_list_head;
     while (curr) {
         pid_t pid = fork();
@@ -119,13 +123,6 @@ int main(int argc, char *argv[]) {
         }
         //μπαμπάς -> συνεχίζει
         curr = curr->next;
-    }
+    }*/
 
-
-    close(fd_in);
-    close(fd_out);
-    unlink(PIPE_IN);
-    unlink(PIPE_OUT);
-    close(log_fd);
-    return 0;
 }
