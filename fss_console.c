@@ -36,7 +36,7 @@ int main() {
             break;
         }
 
-        // Αφαιρούμε το newline στο τέλος
+        
         command[strcspn(command, "\n")] = '\0';
 
         if (strcmp(command, "exit") == 0) {

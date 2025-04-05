@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // καθαρίζω logfiles και named pipes
+    //καθαρίζω logfiles και named pipes
     cleanup_previous_state(manager_logfile);
 
     //ανοίγω manager_logfile
@@ -92,51 +92,35 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-
-    char buffer[256];
+    //οι εντολές από fss_console
+    char command[MAX_CMD_LEN];
     while (1) {
-        ssize_t n = read(fd_in, buffer, sizeof(buffer) - 1);
-        if (n > 0) {
-            buffer[n] = '\0';
+        ssize_t bytes = read(PIPE_IN, command, sizeof(command) - 1);
+        if (bytes <= 0) continue;
 
-            // Αφαιρούμε new line
-            buffer[strcspn(buffer, "\n")] = '\0';
+        command[bytes] = '\0';
 
-            // Debug log
-            dprintf(log_fd, "Received command: %s\n", buffer);
+        handle_command(command, PIPE_OUT);
 
-            if (strcmp(buffer, "status") == 0) {
-                sync_info_mem_store *curr = sync_list_head;
-                char outbuf[1024];
-                int len = 0;
-                while (curr) {
-                    len += snprintf(outbuf + len, sizeof(outbuf) - len,
-                                    "Pair: %s -> %s | Errors: %d | Active: %d\n",
-                                    curr->source_dir, curr->target_dir,
-                                    curr->error_count, curr->active);
-                    curr = curr->next;
-                }
-                if (len == 0)
-                    snprintf(outbuf, sizeof(outbuf), "No sync pairs loaded.\n");
-                write(fd_out, outbuf, strlen(outbuf));
-            } else if (strcmp(buffer, "help") == 0) {
-                const char *help_msg =
-                    "Available commands:\n"
-                    "  status     - Show current sync status\n"
-                    "  help       - Show this message\n"
-                    "  quit       - Exit console (console side only)\n";
-                write(fd_out, help_msg, strlen(help_msg));
-            } else if (strcmp(buffer, "shutdown") == 0) {
-                const char *msg = "Manager shutting down.\n";
-                write(fd_out, msg, strlen(msg));
-                break; 
-            } else {
-                const char *err = "Unknown command. Type 'help' for options.\n";
-                write(fd_out, err, strlen(err));
-            }
-            
+        if (strncmp(command, "shutdown", 8) == 0) {
+            break;
         }
     }
+
+    //αρχικός συγχρονισμός
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            //παιδί -> worker process
+            perform_initial_sync(curr->source_dir, curr->target_dir);
+            exit(0);
+        }
+        //μπαμπάς -> συνεχίζει
+        curr = curr->next;
+    }
+
+
     close(fd_in);
     close(fd_out);
     unlink(PIPE_IN);

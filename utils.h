@@ -21,4 +21,8 @@ extern int log_fd;
 void load_config_file(const char *config_path);
 void cleanup_previous_state(const char *logfile);
 
-#endif // UTILS_H
+void free_sync_list();
+void close_log_file();
+void handle_command(const char *cmd, int pipe_out_fd);
+void perform_initial_sync(const char *src, const char *dst);
+#endif //UTILS_H
