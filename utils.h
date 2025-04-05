@@ -11,6 +11,7 @@ typedef struct sync_info_mem_store {
     char target_dir[256];
     int active;
     int error_count;
+    int is_syncing; 
     time_t last_sync_time;
     struct sync_info_mem_store *next;
 } sync_info_mem_store;

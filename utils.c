@@ -100,6 +100,7 @@ void close_log_file() {
         log_fd = -1;
     }
 }
+
 void handle_command(const char *cmd, int pipe_out_fd) {
     char response[512];
     char log_entry[512];
@@ -172,6 +173,39 @@ void handle_command(const char *cmd, int pipe_out_fd) {
             write(pipe_out_fd, response, strlen(response));
         }
     }
+    else if (strncmp(cmd, "status ", 7) == 0) {
+        char src[256];
+        sscanf(cmd + 7, "%255s", src);
+        sync_info_mem_store *curr = sync_list_head;
+        int found = 0;
+        while (curr) {
+            if (strcmp(curr->source_dir, src) == 0) {
+                found = 1;
+                snprintf(response, sizeof(response),
+                         "%s Status requested for %s\n"
+                         "Directory: %s\n"
+                         "Target: %s\n"
+                         "Last Sync: %s"
+                         "Errors: %d\n"
+                         "Status: %s\n",
+                         timebuf, src,
+                         curr->source_dir,
+                         curr->target_dir,
+                         asctime(localtime(&curr->last_sync_time)),
+                         curr->error_count,
+                         curr->active ? "Active" : "Inactive");
+                write(pipe_out_fd, response, strlen(response));
+                break;
+            }
+            curr = curr->next;
+        }
+        if (!found) {
+            snprintf(response, sizeof(response),
+                     "%s Directory not monitored: %s\n", timebuf, src);
+            write(pipe_out_fd, response, strlen(response));
+        }
+    }
+    
     
 }
 
