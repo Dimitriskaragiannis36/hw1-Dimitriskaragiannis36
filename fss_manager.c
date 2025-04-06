@@ -80,10 +80,7 @@ int main(int argc, char *argv[]) {
         close(log_fd);
         exit(EXIT_FAILURE);
     }
-
-    //φορτώνω το config_file στην λίστα utils.h
-    load_config_file(config_file);
-    
+   
     //ανοίγω named pipes
     int fd_in = open(PIPE_IN, O_RDONLY);
     if (fd_in == -1) {
@@ -105,14 +102,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //αρχικοί κατάλογοι από config
-    load_config_file(config_file);
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
-        add_watch_entry(inotify_fd, curr->source_dir, curr->target_dir, log_fd, fd_out);
-        curr = curr->next;
-    }
-
+    //φορτώνω τα ζεύγη από το config και ξεκινάω monitoring/sync
+    load_config_file(config_file, inotify_fd, log_fd, fd_out);
 
     //οι εντολές από fss_console
     char command[MAX_CMD_LEN];

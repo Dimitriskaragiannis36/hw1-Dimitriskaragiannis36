@@ -10,17 +10,21 @@
 #include <sys/inotify.h>
 #include "utils.h"
 
+#define READ_BUFFER_SIZE 1024
+
 sync_info_mem_store *sync_list_head = NULL;
 int log_fd = -1;
+int global_inotify_fd = -1;
 
-void load_config_file(const char *config_path) {
+
+void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out) {
     int fd = open(config_path, O_RDONLY);
     if (fd == -1) {
         perror("open config_file");
         exit(EXIT_FAILURE);
     }
 
-    char buffer[1024];
+    char buffer[READ_BUFFER_SIZE];
     ssize_t bytes_read;
     size_t total = 0;
     char line[512];
@@ -34,23 +38,7 @@ void load_config_file(const char *config_path) {
 
                 char src[256], tgt[256];
                 if (sscanf(line, "%255s %255s", src, tgt) == 2) {
-                    sync_info_mem_store *entry = malloc(sizeof(sync_info_mem_store));
-                    if (!entry) {
-                        perror("malloc");
-                        close(fd);
-                        exit(EXIT_FAILURE);
-                    }
-                    strncpy(entry->source_dir, src, sizeof(entry->source_dir));
-                    strncpy(entry->target_dir, tgt, sizeof(entry->target_dir));
-                    entry->active = 1;
-                    entry->error_count = 0;
-                    entry->last_sync_time = time(NULL);
-                    entry->next = sync_list_head;
-                    sync_list_head = entry;
-
-                    char logbuf[512];
-                    int len = snprintf(logbuf, sizeof(logbuf), "Loaded pair: %s -> %s\n", src, tgt);
-                    write(log_fd, logbuf, len);
+                    add_watch_entry(inotify_fd, src, tgt, log_fd, fd_out);
                 }
             } else if (line_pos < (int)sizeof(line) - 1) {
                 line[line_pos++] = buffer[i];
@@ -334,10 +322,16 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     while (curr) {
         if (strcmp(curr->source_dir, source) == 0) {
             if (strcmp(curr->target_dir, target) == 0) {
-                dprintf(fd_out, "[%ld] Already in queue: %s\n", time(NULL), source);
+                char msg[512];
+                time_t now = time(NULL);
+                snprintf(msg, sizeof(msg), "[%ld] Already in queue: %s\n", now, source);
+                write(fd_out, msg, strlen(msg));
                 return 0;
             } else {
-                dprintf(fd_out, "[%ld] Source %s already monitored with different target\n", time(NULL), source);
+                char msg[512];
+                time_t now = time(NULL);
+                snprintf(msg, sizeof(msg), "[%ld] Source %s already monitored with different target\n", now, source);
+                write(fd_out, msg, strlen(msg));
                 return -1;
             }
         }
@@ -351,6 +345,10 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     }
 
     sync_info_mem_store *new_entry = malloc(sizeof(sync_info_mem_store));
+    if (!new_entry) {
+        perror("malloc");
+        return -1;
+    }
     strcpy(new_entry->source_dir, source);
     strcpy(new_entry->target_dir, target);
     new_entry->watch_descriptor = wd;
@@ -360,8 +358,12 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     perform_initial_sync(source, target);
 
     char msg[512];
-    snprintf(msg, sizeof(msg), "Added directory: %s -> %s\nMonitoring started for %s", source, target, source);
-    log_message(log_fd, msg);
-    dprintf(fd_out, "[%ld] %s\n", time(NULL), msg);
+    time_t now = time(NULL);
+    snprintf(msg, sizeof(msg), "[%ld] Added directory: %s -> %s\n[%ld] Monitoring started for %s\n",
+             now, source, target, now, source);
+
+    log_message(log_fd, msg);           
+    write(fd_out, msg, strlen(msg));    
+
     return 0;
 }
