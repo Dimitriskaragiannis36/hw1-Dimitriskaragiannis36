@@ -390,11 +390,14 @@ void handle_added(const char *src, const char *dst, const char *filename) {
     close(dst_fd);
 }
 
-void do_full_sync(const char *src, const char *dst) {
+void do_full_sync(const char *src, const char *dst, 
+    int *files_copied, int *files_skipped, 
+    char *error_buffer, size_t *error_offset) {
+
     DIR *src_dir = opendir(src);
     if (!src_dir) {
-        perror("opendir source");
-        exit(EXIT_FAILURE);
+        log_error(src, strerror(errno), error_buffer, error_offset);
+        return;
     }
 
     struct dirent *entry;
@@ -409,14 +412,17 @@ void do_full_sync(const char *src, const char *dst) {
 
         int src_fd = open(src_path, O_RDONLY);
         if (src_fd < 0) {
-            perror("open source file");
+            log_error(src_path, strerror(errno), error_buffer, error_offset);
+            (*files_skipped)++;
             continue;
         }
 
         int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (dst_fd < 0) {
             perror("open target file");
+            log_error(dst_path, strerror(errno), error_buffer, error_offset);
             close(src_fd);
+            (*files_skipped)++;
             continue;
         }
 
@@ -424,13 +430,24 @@ void do_full_sync(const char *src, const char *dst) {
         ssize_t bytes;
         while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
             if (write(dst_fd, buffer, bytes) != bytes) {
-                perror("write");
+                log_error(dst_path, "write error", error_buffer, error_offset);
+                success = 0;
                 break;
             }
         }
 
+        if (bytes < 0) {
+            log_error(src_path, "read error", error_buffer, error_offset);
+            success = 0;
+        }
+
         close(src_fd);
         close(dst_fd);
+
+        if (success)
+             (*files_copied)++;
+        else
+             (*files_skipped)++;
     }
 
     closedir(src_dir);
@@ -449,3 +466,25 @@ void handle_deleted(const char *dst, const char *filename) {
         perror("unlink");
     }
 }
+
+void send_exec_report(const char *status, int copied, int skipped, const char *error_buffer) {
+    char line[256];
+
+    write(STDOUT_FILENO, "EXEC_REPORT_START\n", strlen("EXEC_REPORT_START\n"));
+
+    write(STDOUT_FILENO, "STATUS: ", strlen("STATUS: "));
+    write(STDOUT_FILENO, status, strlen(status));
+    write(STDOUT_FILENO, "\n", 1);
+
+    snprintf(line, sizeof(line), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
+    write(STDOUT_FILENO, line, strlen(line));
+
+    if (strlen(error_buffer) > 0) {
+        write(STDOUT_FILENO, "ERRORS:\n", strlen("ERRORS:\n"));
+        write(STDOUT_FILENO, error_buffer, strlen(error_buffer));
+    }
+
+    write(STDOUT_FILENO, "EXEC_REPORT_END\n", strlen("EXEC_REPORT_END\n"));
+}
+
+

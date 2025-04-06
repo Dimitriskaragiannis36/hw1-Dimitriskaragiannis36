@@ -10,6 +10,10 @@
 #include "utils.h"
 
 #define BUF_SIZE 4096
+#define ERROR_BUF_SIZE 8192
+char error_buffer[ERROR_BUF_SIZE] = "";
+size_t error_offset = 0;
+int files_copied = 0, files_skipped = 0;
 
 int main(int argc, char *argv[]) {
     if (argc != 5) {
@@ -28,7 +32,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "For FULL operation, filename must be ALL\n");
                 exit(EXIT_FAILURE);
             }
-            do_full_sync(src_dir, dst_dir);
+            do_full_sync(src_dir, dst_dir, &files_copied, &files_skipped, error_buffer, &error_offset);
             break;
 
         case OP_ADDED:
@@ -44,6 +48,7 @@ int main(int argc, char *argv[]) {
             break;
     }
 
-    
+    const char *status = (error_offset > 0) ? "PARTIAL" : "SUCCESS";
+    send_exec_report(status, files_copied, files_skipped, error_buffer);
     return 0;
 }
