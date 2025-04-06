@@ -79,8 +79,38 @@ int main(int argc, char *argv[]) {
         char timestamp[64];
         get_timestamp(timestamp, sizeof(timestamp));
         char log_entry[1024];
-        int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
-        write(log_fd, log_entry, len);
+        
+        //ελέγχω αν είναι σωστή εντολή
+        if (strncmp(command, "add ", 4) != 0 &&
+        strncmp(command, "status ", 7) != 0 &&
+        strncmp(command, "sync ", 5) != 0 &&
+        strncmp(command, "cancel ", 7) != 0 &&
+        strcmp(command, "shutdown") != 0) {
+        break; 
+    }
+
+    //ελέγχω arguments για να μην κρεμάει
+    if (strncmp(command, "add ", 4) == 0) {
+        char src[256], trg[256];
+        if (sscanf(command + 4, "%255s %255s", src, trg) != 2) {
+            printf("Usage: add <source_dir> <target_dir>\n");
+            int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid add usage: %s\n", timestamp, command);
+            write(log_fd, log_entry, len);
+            break;
+        }
+    } else if (strncmp(command, "status ", 7) == 0 || strncmp(command, "sync ", 5) == 0 || strncmp(command, "cancel ", 7) == 0) {
+        char src[256];
+        if (sscanf(strchr(command, ' ') + 1, "%255s", src) != 1) {
+            printf("Usage: %s <source_dir>\n", strtok(command, " "));
+            int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid usage: %s\n", timestamp, command);
+            write(log_fd, log_entry, len);
+            break;
+        }
+    }
+
+    // Log command
+    int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
+    write(log_fd, log_entry, len);
 
 
         //αποστολή σε fss_manager

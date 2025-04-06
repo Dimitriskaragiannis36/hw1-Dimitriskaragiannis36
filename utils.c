@@ -91,7 +91,7 @@ void close_log_file() {
     }
 }
 
-int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
+int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd, int inotify_fd)
  {
     char response[1024]; 
     char log_entry[1024];
@@ -104,41 +104,8 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
     if (strncmp(cmd, "add ", 4) == 0) {
         char src[256], tgt[256];
         if (sscanf(cmd + 4, "%255s %255s", src, tgt) == 2) {
-            //τσέκαρε αν είναι monitored
-            sync_info_mem_store *curr = sync_list_head;
-            while (curr) {
-                if (strcmp(curr->source_dir, src) == 0 &&
-                    strcmp(curr->target_dir, tgt) == 0) {
-                    snprintf(response, sizeof(response),
-                             "%s Already in queue: %s\n", timebuf, src);
-                    write(pipe_out_fd, response, strlen(response));
-                    return 0;
-                }
-                curr = curr->next;
-            }
-
-            //add
-            sync_info_mem_store *new_entry = malloc(sizeof(sync_info_mem_store));
-            strncpy(new_entry->source_dir, src, 256);
-            strncpy(new_entry->target_dir, tgt, 256);
-            new_entry->active = 1;
-            new_entry->error_count = 0;
-            new_entry->last_sync_time = now;
-            new_entry->next = sync_list_head;
-            sync_list_head = new_entry;
-
-            snprintf(response, sizeof(response),
-                     "%s Added directory: %s -> %s\n"
-                     "%s Monitoring started for %s\n",
-                     timebuf, src, tgt, timebuf, src);
-            write(pipe_out_fd, response, strlen(response));
-
-            //log to file
-            snprintf(log_entry, sizeof(log_entry),
-                     "%s Added directory: %s -> %s\n"
-                     "%s Monitoring started for %s\n",
-                     timebuf, src, tgt, timebuf, src);
-            write(log_fd, log_entry, strlen(log_entry));
+            int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
+            return result;  // απλό και καθαρό
         }//άκυρο
     } else if (strncmp(cmd, "cancel ", 7) == 0) {
         char src[256];
@@ -295,7 +262,7 @@ sync_info_mem_store* find_entry_by_watch(int wd) {
 int sync_on_change(const char *src, const char *dst, int log_fd) {
     char msg[512];
     snprintf(msg, sizeof(msg), "Sync triggered: %s -> %s", src, dst);
-    log_message(log_fd, msg);
+    write(log_fd, msg, strlen(msg)); 
     return perform_initial_sync(src, dst);
 }
 
@@ -322,15 +289,24 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     while (curr) {
         if (strcmp(curr->source_dir, source) == 0) {
             if (strcmp(curr->target_dir, target) == 0) {
+                if (!curr->active) {
+                    curr->active = 1;
+                }
                 char msg[512];
                 time_t now = time(NULL);
-                snprintf(msg, sizeof(msg), "[%ld] Already in queue: %s\n", now, source);
+                struct tm *timeinfo = localtime(&now);
+                char time_str[64];
+                strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+                snprintf(msg, sizeof(msg), "%s Already in queue: %s\n", time_str, source);
                 write(fd_out, msg, strlen(msg));
                 return 0;
             } else {
                 char msg[512];
                 time_t now = time(NULL);
-                snprintf(msg, sizeof(msg), "[%ld] Source %s already monitored with different target\n", now, source);
+                struct tm *timeinfo = localtime(&now); 
+                char time_str[64];
+                strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+                snprintf(msg, sizeof(msg), "%s Source %s already monitored with different target\n", time_str, source);
                 write(fd_out, msg, strlen(msg));
                 return -1;
             }
@@ -352,6 +328,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     strcpy(new_entry->source_dir, source);
     strcpy(new_entry->target_dir, target);
     new_entry->watch_descriptor = wd;
+    new_entry->last_sync_time = time(NULL);
     new_entry->next = sync_list_head;
     sync_list_head = new_entry;
 
@@ -359,11 +336,16 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
 
     char msg[512];
     time_t now = time(NULL);
-    snprintf(msg, sizeof(msg), "[%ld] Added directory: %s -> %s\n[%ld] Monitoring started for %s\n",
-             now, source, target, now, source);
+    struct tm *timeinfo = localtime(&now); 
+    char time_str[64];
+    strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+    snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring started for %s\n",
+    time_str, source, target, time_str, source);
 
-    log_message(log_fd, msg);           
+    write(log_fd, msg, strlen(msg));          
     write(fd_out, msg, strlen(msg));    
 
     return 0;
 }
+
+

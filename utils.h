@@ -14,6 +14,7 @@ typedef struct sync_info_mem_store {
     int active;
     int error_count;
     int is_syncing; 
+    int watch_descriptor; 
     time_t last_sync_time;
     struct sync_info_mem_store *next;
 } sync_info_mem_store;
@@ -28,9 +29,8 @@ void cleanup_previous_state(const char *logfile);
 void free_sync_list();
 void close_log_file();
 
-int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd);
+int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd, int inotify_fd);
 void get_timestamp(char *buffer, size_t size);
-void perform_initial_sync(const char *src, const char *dst);
 
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out);
 int perform_initial_sync(const char *src, const char *dst);

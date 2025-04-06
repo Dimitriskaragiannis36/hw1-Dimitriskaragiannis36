@@ -59,13 +59,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    const char *message = "Debug fss_manager started\n";
+    /*const char *message = "Debug fss_manager started\n";
     ssize_t bytes_written = write(log_fd, message, strlen(message));
     if (bytes_written == -1) {
         perror("write fss_manager problem");
         close(log_fd);
         exit(EXIT_FAILURE);
-    }
+    }*/
 
 
     //δημιουργώ named pipes
@@ -124,7 +124,7 @@ int main(int argc, char *argv[]) {
             ssize_t bytes = read(fd_in, command, sizeof(command) - 1);
             if (bytes <= 0) continue;
             command[bytes] = '\0';
-            if (handle_command(command, fd_out, fd_in, log_fd)) {
+            if (handle_command(command, fd_out, fd_in, log_fd, inotify_fd)) {
                 close(fd_in);
                 close(fd_out);
                 unlink(PIPE_IN);
