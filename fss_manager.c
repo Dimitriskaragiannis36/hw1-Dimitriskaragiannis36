@@ -98,21 +98,53 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    //αρχικοποίηση inotify
+    int inotify_fd = inotify_init1(0);
+    if (inotify_fd < 0) {
+        perror("inotify_init");
+        exit(EXIT_FAILURE);
+    }
+
+    //αρχικοί κατάλογοι από config
+    load_config_file(config_file);
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        add_watch_entry(inotify_fd, curr->source_dir, curr->target_dir, log_fd, fd_out);
+        curr = curr->next;
+    }
+
+
     //οι εντολές από fss_console
     char command[MAX_CMD_LEN];
+
+    fd_set fds;
+    int max_fd = (fd_in > inotify_fd) ? fd_in : inotify_fd;
     while (1) {
-        ssize_t bytes = read(fd_in, command, sizeof(command) - 1);
-        if (bytes <= 0) continue;
-
-        command[bytes] = '\0';
-
-        if (handle_command(command, fd_out, fd_in, log_fd)) {
-            close(fd_in);
-            close(fd_out);
-            unlink(PIPE_IN);
-            unlink(PIPE_OUT);
-            close(log_fd);
+        FD_ZERO(&fds);
+        FD_SET(fd_in, &fds);
+        FD_SET(inotify_fd, &fds);
+    
+        if (select(max_fd + 1, &fds, NULL, NULL, NULL) == -1) {
+            perror("select");
             break;
+        }
+    
+        if (FD_ISSET(fd_in, &fds)) {
+            ssize_t bytes = read(fd_in, command, sizeof(command) - 1);
+            if (bytes <= 0) continue;
+            command[bytes] = '\0';
+            if (handle_command(command, fd_out, fd_in, log_fd)) {
+                close(fd_in);
+                close(fd_out);
+                unlink(PIPE_IN);
+                unlink(PIPE_OUT);
+                close(log_fd);
+                break;
+            }
+        }
+    
+        if (FD_ISSET(inotify_fd, &fds)) {
+            handle_inotify_events(inotify_fd, log_fd);
         }
         
     }

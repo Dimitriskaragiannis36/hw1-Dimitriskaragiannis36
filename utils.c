@@ -7,6 +7,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <errno.h>
+#include <sys/inotify.h>
 #include "utils.h"
 
 sync_info_mem_store *sync_list_head = NULL;
@@ -288,7 +289,79 @@ void get_timestamp(char *buffer, size_t size) {
     strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
 }
 
-void perform_initial_sync(const char *src, const char *dst) {
+int perform_initial_sync(const char *src, const char *dst) {
 
+    printf("Initial sync: %s -> %s\n", src, dst);
+    return 0;
+}
 
+sync_info_mem_store* find_entry_by_watch(int wd) {
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (curr->watch_descriptor == wd) return curr;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
+int sync_on_change(const char *src, const char *dst, int log_fd) {
+    char msg[512];
+    snprintf(msg, sizeof(msg), "Sync triggered: %s -> %s", src, dst);
+    log_message(log_fd, msg);
+    return perform_initial_sync(src, dst);
+}
+
+void handle_inotify_events(int inotify_fd, int log_fd) {
+    char buffer[EVENT_BUF_LEN];
+    int length = read(inotify_fd, buffer, EVENT_BUF_LEN);
+    if (length < 0) return;
+
+    int i = 0;
+    while (i < length) {
+        struct inotify_event *event = (struct inotify_event *)&buffer[i];
+        if (event->mask & (IN_CREATE | IN_MODIFY | IN_DELETE)) {
+            sync_info_mem_store *entry = find_entry_by_watch(event->wd);
+            if (entry) {
+                sync_on_change(entry->source_dir, entry->target_dir, log_fd);
+            }
+        }
+        i += sizeof(struct inotify_event) + event->len;
+    }
+}
+
+int add_watch_entry(int inotify_fd, const char *source, const char *target, int log_fd, int fd_out) {
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (strcmp(curr->source_dir, source) == 0) {
+            if (strcmp(curr->target_dir, target) == 0) {
+                dprintf(fd_out, "[%ld] Already in queue: %s\n", time(NULL), source);
+                return 0;
+            } else {
+                dprintf(fd_out, "[%ld] Source %s already monitored with different target\n", time(NULL), source);
+                return -1;
+            }
+        }
+        curr = curr->next;
+    }
+
+    int wd = inotify_add_watch(inotify_fd, source, IN_CREATE | IN_MODIFY | IN_DELETE);
+    if (wd < 0) {
+        perror("inotify_add_watch");
+        return -1;
+    }
+
+    sync_info_mem_store *new_entry = malloc(sizeof(sync_info_mem_store));
+    strcpy(new_entry->source_dir, source);
+    strcpy(new_entry->target_dir, target);
+    new_entry->watch_descriptor = wd;
+    new_entry->next = sync_list_head;
+    sync_list_head = new_entry;
+
+    perform_initial_sync(source, target);
+
+    char msg[512];
+    snprintf(msg, sizeof(msg), "Added directory: %s -> %s\nMonitoring started for %s", source, target, source);
+    log_message(log_fd, msg);
+    dprintf(fd_out, "[%ld] %s\n", time(NULL), msg);
+    return 0;
 }
