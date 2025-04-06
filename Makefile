@@ -6,8 +6,8 @@ all: fss_manager fss_console
 fss_manager: fss_manager.c utils.c
 	$(CC) $(CFLAGS) -o fss_manager fss_manager.c utils.c
 
-fss_console: fss_console.c
-	$(CC) $(CFLAGS) -o fss_console fss_console.c
+fss_console: fss_console.c utils.c
+	$(CC) $(CFLAGS) -o fss_console fss_console.c utils.c
 
 run: fss_manager
 	./fss_manager -l manager_logfile -c config_file -n 

@@ -282,6 +282,12 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd)
 return 0;  
 }
 
+void get_timestamp(char *buffer, size_t size) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
+}
+
 void perform_initial_sync(const char *src, const char *dst) {
 
 

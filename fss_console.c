@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <getopt.h>
+#include "utils.h" 
 
 #define PIPE_IN "fss_in"
 #define PIPE_OUT "fss_out"
@@ -75,6 +76,13 @@ int main(int argc, char *argv[]) {
             break;
         }
 
+        char timestamp[64];
+        get_timestamp(timestamp, sizeof(timestamp));
+        char log_entry[1024];
+        int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
+        write(log_fd, log_entry, len);
+
+
         //αποστολή σε fss_manager
         if (write(pipe_in_fd, command, strlen(command)) == -1) {
             perror("write to fss_in");
@@ -87,7 +95,11 @@ int main(int argc, char *argv[]) {
         if (bytes_read > 0) {
             response[bytes_read] = '\0';
             printf("%s\n", response);
-        
+            
+            int len = snprintf(log_entry, sizeof(log_entry), "%s\n", response);
+            write(log_fd, log_entry, len);
+
+
             // αν είναι shutdown, τερμάτισε αφού διαβάσεις την απάντηση
             if (strncmp(command, "shutdown", 8) == 0) {
                 break;

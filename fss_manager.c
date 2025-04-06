@@ -20,10 +20,10 @@ void print_usage(const char *progname) {
 int main(int argc, char *argv[]) {
     char *manager_logfile = NULL;
     char *config_file = NULL;
-    int worker_limit = DEFAULT_WORKER_LIMIT;
+    int worker_limit;
 
     int opt;
-    while ((opt = getopt(argc, argv, "l:c:n:")) != -1) {
+    while ((opt = getopt(argc, argv, "l:c:n::")) != -1) {
         switch (opt) {
             case 'l':
                 manager_logfile = optarg;
@@ -31,9 +31,13 @@ int main(int argc, char *argv[]) {
             case 'c':
                 config_file = optarg;
                 break;
-            case 'n':
-                worker_limit = atoi(optarg);
-                break;
+                case 'n':
+                if (optarg) {
+                    worker_limit = atoi(optarg);
+                } else {
+                    worker_limit = DEFAULT_WORKER_LIMIT;
+                }
+                break;            
             default:
                 print_usage(argv[0]);
                 exit(EXIT_FAILURE);
