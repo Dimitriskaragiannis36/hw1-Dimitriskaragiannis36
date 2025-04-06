@@ -7,6 +7,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <errno.h>
+#include <dirent.h>
 #include <sys/inotify.h>
 #include "utils.h"
 
@@ -348,4 +349,12 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     return 0;
 }
 
+Operation parse_operation(const char *op_str) {
+    if (strcmp(op_str, "FULL") == 0) return OP_FULL;
+    if (strcmp(op_str, "ADDED") == 0) return OP_ADDED;
+    if (strcmp(op_str, "MODIFIED") == 0) return OP_MODIFIED;
+    if (strcmp(op_str, "DELETED") == 0) return OP_DELETED;
 
+    fprintf(stderr, "Invalid operation: %s\n", op_str);
+    exit(EXIT_FAILURE);
+}

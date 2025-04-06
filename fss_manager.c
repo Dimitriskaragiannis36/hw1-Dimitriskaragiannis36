@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <getopt.h>
+#include <dirent.h>
 #include "utils.h" 
 
 #define DEFAULT_WORKER_LIMIT 5
