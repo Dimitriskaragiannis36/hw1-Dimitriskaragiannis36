@@ -3,6 +3,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #define PIPE_IN "fss_in"
 #define PIPE_OUT "fss_out"
@@ -14,7 +15,38 @@ void print_prompt() {
     fflush(stdout);
 }
 
-int main() {
+void print_usage(const char *progname) {
+    fprintf(stderr, "Usage: %s -l <console-logfile>\n", progname);
+}
+
+int main(int argc, char *argv[]) {
+    char *console_logfile = NULL;
+    int opt;
+
+    // Ανάγνωση ορίσματος -l
+    while ((opt = getopt(argc, argv, "l:")) != -1) {
+        switch (opt) {
+            case 'l':
+                console_logfile = optarg;
+                break;
+            default:
+                print_usage(argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if (!console_logfile) {
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    //άνοιγμα cosnole logfile
+    int log_fd = open(console_logfile, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (log_fd == -1) {
+        perror("open log file");
+        exit(EXIT_FAILURE);
+    }
+
     int pipe_in_fd = open(PIPE_IN, O_WRONLY);
     if (pipe_in_fd == -1) {
         perror("open fss_in");
@@ -70,5 +102,6 @@ int main() {
 
     close(pipe_in_fd);
     close(pipe_out_fd);
+    close(log_fd);
     return 0;
 }

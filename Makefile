@@ -10,10 +10,10 @@ fss_console: fss_console.c
 	$(CC) $(CFLAGS) -o fss_console fss_console.c
 
 run: fss_manager
-	./fss_manager -l manager.log -c config.txt -n 5
+	./fss_manager -l manager_logfile -c config_file -n 
 
 console: fss_console
-	./fss_console
+	./fss_console -l console_logfile
 
 clean:
 	rm -f fss_manager fss_console *.o manager.log
