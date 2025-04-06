@@ -364,25 +364,88 @@ void handle_added(const char *src, const char *dst, const char *filename) {
     snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
 
-    int in_fd = open(src_path, O_RDONLY);
-    if (in_fd < 0) {
+    int src_fd = open(src_path, O_RDONLY);
+    if (src_fd < 0) {
         perror("open src");
         return;
     }
 
-    int out_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (out_fd < 0) {
+    int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dst_fd < 0) {
         perror("open dst");
-        close(in_fd);
+        close(src_fd);
         return;
     }
 
     char buffer[BUF_SIZE];
     ssize_t bytes;
-    while ((bytes = read(in_fd, buffer, BUF_SIZE)) > 0) {
-        write(out_fd, buffer, bytes);
+    while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
+        if (write(dst_fd, buffer, bytes) != bytes) {
+            perror("write");
+            break;
+        }
     }
 
-    close(in_fd);
-    close(out_fd);
+    close(src_fd);
+    close(dst_fd);
+}
+
+void do_full_sync(const char *src, const char *dst) {
+    DIR *src_dir = opendir(src);
+    if (!src_dir) {
+        perror("opendir source");
+        exit(EXIT_FAILURE);
+    }
+
+    struct dirent *entry;
+    char src_path[512], dst_path[512];
+
+    while ((entry = readdir(src_dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+
+        int src_fd = open(src_path, O_RDONLY);
+        if (src_fd < 0) {
+            perror("open source file");
+            continue;
+        }
+
+        int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (dst_fd < 0) {
+            perror("open target file");
+            close(src_fd);
+            continue;
+        }
+
+        char buffer[BUF_SIZE];
+        ssize_t bytes;
+        while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
+            if (write(dst_fd, buffer, bytes) != bytes) {
+                perror("write");
+                break;
+            }
+        }
+
+        close(src_fd);
+        close(dst_fd);
+    }
+
+    closedir(src_dir);
+}
+
+void handle_modified(const char *src, const char *dst, const char *filename) {
+    //απλώς αντικαθιστά το αρχείο
+    handle_added(src, dst, filename);
+}
+
+void handle_deleted(const char *dst, const char *filename) {
+    char dst_path[512];
+    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
+
+    if (unlink(dst_path) < 0) {
+        perror("unlink");
+    }
 }
