@@ -46,6 +46,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
 void handle_inotify_events(int inotify_fd, int log_fd);
 int sync_on_change(const char *src, const char *dst, int log_fd);
 
+Operation parse_operation(const char *op_str);
 void do_full_sync(const char *src, const char *dst);
 void handle_added(const char *src, const char *dst, const char *filename);
 void handle_modified(const char *src, const char *dst, const char *filename);

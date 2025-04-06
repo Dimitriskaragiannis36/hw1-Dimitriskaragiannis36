@@ -358,3 +358,31 @@ Operation parse_operation(const char *op_str) {
     fprintf(stderr, "Invalid operation: %s\n", op_str);
     exit(EXIT_FAILURE);
 }
+
+void handle_added(const char *src, const char *dst, const char *filename) {
+    char src_path[512], dst_path[512];
+    snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
+    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
+
+    int in_fd = open(src_path, O_RDONLY);
+    if (in_fd < 0) {
+        perror("open src");
+        return;
+    }
+
+    int out_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (out_fd < 0) {
+        perror("open dst");
+        close(in_fd);
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    ssize_t bytes;
+    while ((bytes = read(in_fd, buffer, BUF_SIZE)) > 0) {
+        write(out_fd, buffer, bytes);
+    }
+
+    close(in_fd);
+    close(out_fd);
+}

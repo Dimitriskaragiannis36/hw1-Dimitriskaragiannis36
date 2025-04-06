@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include "utils.h"
 
 #define BUF_SIZE 4096
 
