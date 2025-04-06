@@ -50,8 +50,16 @@ Operation parse_operation(const char *op_str);
 void do_full_sync(const char *src, const char *dst, 
     int *files_copied, int *files_skipped, 
     char *error_buffer, size_t *error_offset);
-void handle_added(const char *src, const char *dst, const char *filename);
-void handle_modified(const char *src, const char *dst, const char *filename);
-void handle_deleted(const char *dst, const char *filename);
-void send_exec_report(const char *status, int copied, int skipped, const char *error_buffer);
+void handle_added(const char *src_dir, const char *dst_dir, const char *filename,
+        int *files_copied, int *files_skipped,
+        char *error_buffer, size_t *error_offset);
+
+void handle_modified(const char *src_dir, const char *dst_dir, const char *filename,
+           int *files_copied, int *files_skipped,
+           char *error_buffer, size_t *error_offset);
+
+void handle_deleted(const char *dst_dir, const char *filename,
+          int *files_copied, int *files_skipped,
+          char *error_buffer, size_t *error_offset);
+
 #endif //UTILS_H

@@ -359,35 +359,52 @@ Operation parse_operation(const char *op_str) {
     exit(EXIT_FAILURE);
 }
 
-void handle_added(const char *src, const char *dst, const char *filename) {
+void handle_added(const char *src, const char *dst, const char *filename, 
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
+
     char src_path[512], dst_path[512];
     snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
 
     int src_fd = open(src_path, O_RDONLY);
     if (src_fd < 0) {
-        perror("open src");
+        log_error(src_path, strerror(errno), error_buffer, error_offset);
+        (*files_skipped)++;
         return;
     }
 
     int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (dst_fd < 0) {
-        perror("open dst");
+        log_error(dst_path, strerror(errno), error_buffer, error_offset);
         close(src_fd);
+        (*files_skipped)++;
         return;
     }
 
     char buffer[BUF_SIZE];
     ssize_t bytes;
+    int success = 1;
     while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
         if (write(dst_fd, buffer, bytes) != bytes) {
-            perror("write");
+            log_error(dst_path, "write error", error_buffer, error_offset);
+            success = 0;
             break;
         }
     }
 
+    if (bytes < 0) {
+        log_error(src_path, "read error", error_buffer, error_offset);
+        success = 0;
+    }
+
     close(src_fd);
     close(dst_fd);
+
+    if (success)
+        (*files_copied)++;
+    else
+        (*files_skipped)++;
 }
 
 void do_full_sync(const char *src, const char *dst, 
@@ -409,6 +426,8 @@ void do_full_sync(const char *src, const char *dst,
 
         snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
         snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+        
+        int success = 1;
 
         int src_fd = open(src_path, O_RDONLY);
         if (src_fd < 0) {
@@ -419,7 +438,6 @@ void do_full_sync(const char *src, const char *dst,
 
         int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (dst_fd < 0) {
-            perror("open target file");
             log_error(dst_path, strerror(errno), error_buffer, error_offset);
             close(src_fd);
             (*files_skipped)++;
@@ -455,15 +473,21 @@ void do_full_sync(const char *src, const char *dst,
 
 void handle_modified(const char *src, const char *dst, const char *filename) {
     //απλώς αντικαθιστά το αρχείο
-    handle_added(src, dst, filename);
+    handle_added(src, dst, filename, files_copied, files_skipped, error_buffer, error_offset);
 }
 
-void handle_deleted(const char *dst, const char *filename) {
+void handle_deleted(const char *dst, const char *filename,
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
+
     char dst_path[512];
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
 
     if (unlink(dst_path) < 0) {
-        perror("unlink");
+        log_error(dst_path, strerror(errno), error_buffer, error_offset);
+        (*files_skipped)++;
+    } else {
+        (*files_copied)++;  
     }
 }
 

@@ -36,15 +36,15 @@ int main(int argc, char *argv[]) {
             break;
 
         case OP_ADDED:
-            handle_added(src_dir, dst_dir, filename);
+            handle_added(src_dir, dst_dir, filename, &files_copied, &files_skipped, error_buffer, &error_offset);
             break;
 
         case OP_MODIFIED:
-            handle_modified(src_dir, dst_dir, filename);
+            handle_modified(src_dir, dst_dir, filename, &files_copied, &files_skipped, error_buffer, &error_offset);
             break;
 
         case OP_DELETED:
-            handle_deleted(dst_dir, filename);
+            handle_deleted(dst_dir, filename, &files_copied, &files_skipped, error_buffer, &error_offset);
             break;
     }
 
