@@ -96,7 +96,7 @@ int main(int argc, char *argv[]) {
             printf("Usage: add <source_dir> <target_dir>\n");
             int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid add usage: %s\n", timestamp, command);
             write(log_fd, log_entry, len);
-            break;
+            continue;
         }
     } else if (strncmp(command, "status ", 7) == 0 || strncmp(command, "sync ", 5) == 0 || strncmp(command, "cancel ", 7) == 0) {
         char src[256];
@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
             printf("Usage: %s <source_dir>\n", strtok(command, " "));
             int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid usage: %s\n", timestamp, command);
             write(log_fd, log_entry, len);
-            break;
+            continue;
         }
     }
 

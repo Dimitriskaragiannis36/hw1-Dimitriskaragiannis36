@@ -115,6 +115,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
             int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
             return result;  // απλό και καθαρό
         }//άκυρο
+    }
     else if (strncmp(cmd, "cancel ", 7) == 0) {
         char src[256];
         if (sscanf(cmd + 7, "%255s", src) == 1) {
@@ -179,8 +180,11 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                              "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
                     write(log_fd, log_entry, strlen(log_entry));
     
-                    //προσομοίωση χρόνου sync
-                    sleep(2);  
+                    pid_t pid;
+                    start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid);
+                    curr->is_syncing = 1;
+                    curr->running_worker_pid = pid;
+                      
                     curr->last_sync_time = time(NULL);
                     curr->is_syncing = 0;
     
@@ -214,7 +218,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                  timebuf, timebuf, timebuf);
         write(pipe_out_fd, response, strlen(response));
     
-        while (active_workers > 0) {
+        while (active_worker_count > 0) {
             snprintf(response, sizeof(response),
                      "%s Waiting for active workers to finish...\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
@@ -249,20 +253,25 @@ int perform_initial_sync(const char *src, const char *dst) {
     while (entry) {
         if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
             if (entry->is_syncing) {
-                
-                printf("%s Sync already in progress %s\n", timebuf, src);
+                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             }
 
             pid_t pid;
-            int result = start_worker(src, dst, "", OP_FULL);
+            int result = start_worker(src, dst, "", OP_FULL, &pid);
             if (result > 0) {
                 entry->is_syncing = 1;
-                entry->worker_pid = active_workers[active_worker_count - 1].pid; //εναλλακτικά κράτα pid από return
-                printf("%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                entry->worker_pid = pid;
+                snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             } else {
-                fprintf(stderr, "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
+                snprintf(msg, sizeof(msg), "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                write(STDERR_FILENO, msg, strlen(msg));
                 return -1;
             }
         }
@@ -270,7 +279,9 @@ int perform_initial_sync(const char *src, const char *dst) {
     }
 
     //δεν βρέθηκε το entry
-    fprintf(stderr, "%s No sync entry for %s -> %s\n", timebuf, src, dst);
+    snprintf(msg, sizeof(msg), "%s No sync entry for %s -> %s\n", timebuf, src, dst);
+    write(log_fd, msg, strlen(msg));
+    write(STDERR_FILENO, msg, strlen(msg));
     return -1;
 }
 
@@ -386,6 +397,12 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
         perror("malloc");
         return -1;
     }
+
+    new_entry->active = 1;
+    new_entry->error_count = 0;
+    new_entry->is_syncing = 0;
+    new_entry->worker_pid = -1;
+    
     strcpy(new_entry->source_dir, source);
     strcpy(new_entry->target_dir, target);
     new_entry->watch_descriptor = wd;
@@ -669,7 +686,7 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         close(from_worker[1]);
 
         ActiveWorker *w = &active_workers[active_worker_count++];
-        w->pid = pid;
+        w->pid = *pid;
         w->pipe_write = to_worker[1];
         w->pipe_read = from_worker[0];
         strncpy(w->src, src, sizeof(w->src));

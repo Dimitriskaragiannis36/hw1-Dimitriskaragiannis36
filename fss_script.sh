@@ -14,6 +14,11 @@ if [ -z "$path" ] || [ -z "$command" ]; then
   exit 1
 fi
 
+print_usage() {
+    echo "Usage: $0 -p <logfile> -c <purge|listAll|listMonitored|listStopped>"
+}
+
+
 case "$command" in
     purge)
         echo "Purging $path..."
@@ -40,7 +45,7 @@ case "$command" in
 
     listMonitored)
         grep "Monitoring started for" "$path" | while read -r line; do
-            dir=$(echo "$line" | grep -oP "/home/[^ ]+")
+            dir=$(echo "$line" | grep -oP "/[^ ]+")
             line=$(grep "Sync completed $dir" "$path" | tail -n 1)
             last_sync=$(echo "$line" | grep -oP '\[\K[^\]]+')
             target=$(echo "$line" | awk -F'-> ' '{print $2}' | awk '{print $1}')
@@ -49,10 +54,10 @@ case "$command" in
         ;;
 
     listStopped)
-        grep "Command cancel|Monitoring stopped" "$path" | while read -r line; do
-            dir=$(echo "$line" | grep -oP "/home/[^ ]+")
-            target=$(grep -m 1 "$dir" "$path" | grep -oP -- "-> /backup/[^ ]+")
-            last_sync=$(grep -B1 "$dir -> $target" "$path" | grep "Sync completed" | tail -1 | cut -d']' -f1 | tr -d '[')
+        grep "Monitoring stopped for" "$path" | while read -r line; do
+            dir=$(echo "$line" | grep -oP "/[^ ]+")
+            target=$(grep -m1 "$dir" "$path" | grep -oP "-> /[^ ]+")
+            last_sync=$(grep "Sync completed $dir" "$path" | tail -1 | cut -d']' -f1 | tr -d '[')
             echo "$dir -> $target [Last Sync: $last_sync]"
         done
         ;;
