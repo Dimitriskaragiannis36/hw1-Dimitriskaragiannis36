@@ -115,30 +115,14 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
             int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
             return result;  // απλό και καθαρό
         }//άκυρο
-    } else if (strncmp(cmd, "cancel ", 7) == 0) {
+    else if (strncmp(cmd, "cancel ", 7) == 0) {
         char src[256];
-        sscanf(cmd + 7, "%255s", src);
-        sync_info_mem_store *curr = sync_list_head;
-        int found = 0;
-        while (curr) {
-            if (strcmp(curr->source_dir, src) == 0) {
-                curr->active = 0;
-                found = 1;
-                snprintf(response, sizeof(response),
-                         "%s Monitoring stopped for %s\n", timebuf, src);
-                write(pipe_out_fd, response, strlen(response));
-                snprintf(log_entry, sizeof(log_entry),
-                         "%s Monitoring stopped for %s\n", timebuf, src);
-                write(log_fd, log_entry, strlen(log_entry));
-                break;
-            }
-            curr = curr->next;
-        }
-        if (!found) {
-            snprintf(response, sizeof(response),
-                     "%s Directory not monitored: %s\n", timebuf, src);
+        if (sscanf(cmd + 7, "%255s", src) == 1) {
+            remove_watch_entry(src, inotify_fd, log_fd, pipe_out_fd);
+        } else {
+            snprintf(response, sizeof(response), "%s Invalid cancel command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
-        }
+        }   
     }
     else if (strncmp(cmd, "status ", 7) == 0) {
         char src[256];
@@ -256,10 +240,40 @@ void get_timestamp(char *buffer, size_t size) {
 }
 
 int perform_initial_sync(const char *src, const char *dst) {
+    char msg[512];
+    time_t now = time(NULL);
+    char timebuf[64];
+    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
 
-    printf("Initial sync: %s -> %s\n", src, dst);
-    return 0;
+    sync_info_mem_store *entry = sync_list_head;
+    while (entry) {
+        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
+            if (entry->is_syncing) {
+                
+                printf("%s Sync already in progress %s\n", timebuf, src);
+                return 0;
+            }
+
+            pid_t pid;
+            int result = start_worker(src, dst, "", OP_FULL);
+            if (result > 0) {
+                entry->is_syncing = 1;
+                entry->worker_pid = active_workers[active_worker_count - 1].pid; //εναλλακτικά κράτα pid από return
+                printf("%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                return 0;
+            } else {
+                fprintf(stderr, "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
+                return -1;
+            }
+        }
+        entry = entry->next;
+    }
+
+    //δεν βρέθηκε το entry
+    fprintf(stderr, "%s No sync entry for %s -> %s\n", timebuf, src, dst);
+    return -1;
 }
+
 
 sync_info_mem_store* find_entry_by_watch(int wd) {
     sync_info_mem_store *curr = sync_list_head;
@@ -272,10 +286,46 @@ sync_info_mem_store* find_entry_by_watch(int wd) {
 
 int sync_on_change(const char *src, const char *dst, int log_fd) {
     char msg[512];
-    snprintf(msg, sizeof(msg), "Sync triggered: %s -> %s", src, dst);
-    write(log_fd, msg, strlen(msg)); 
-    return perform_initial_sync(src, dst);
+    time_t now = time(NULL);
+    char timebuf[64];
+    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+
+    sync_info_mem_store *entry = sync_list_head;
+    while (entry) {
+        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
+            if (entry->is_syncing) {
+                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
+                write(log_fd, msg, strlen(msg));
+                printf("%s", msg);
+                return 0; //δεν ξεκινά νέο worker
+            }
+
+            pid_t pid;
+            if (start_worker(src, dst, "", OP_FULL, &pid) > 0) {
+                entry->is_syncing = 1;
+                entry->worker_pid = pid;
+
+                snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                printf("%s", msg);
+                return 0;
+            } else {
+                snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                fprintf(stderr, "%s", msg);
+                return -1;
+            }
+        }
+        entry = entry->next;
+    }
+
+    //αν δεν βρέθηκε το entry:
+    snprintf(msg, sizeof(msg), "%s No sync entry found for %s -> %s\n", timebuf, src, dst);
+    write(log_fd, msg, strlen(msg));
+    fprintf(stderr, "%s", msg);
+    return -1;
 }
+
 
 void handle_inotify_events(int inotify_fd, int log_fd) {
     char buffer[EVENT_BUF_LEN];
@@ -358,6 +408,40 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
 
     return 0;
 }
+
+void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pipe_out_fd) {
+    char timebuf[64], response[512], log_entry[512];
+    time_t now = time(NULL);
+    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (strcmp(curr->source_dir, src_dir) == 0) {
+            if (!curr->active) {
+                snprintf(response, sizeof(response), "%s Directory not monitored: %s\n", timebuf, src_dir);
+                write(pipe_out_fd, response, strlen(response));
+                return;
+            }
+
+            //απενεργοποιούμε το watch
+            inotify_rm_watch(inotify_fd, curr->watch_descriptor);
+            curr->active = 0;
+
+            snprintf(response, sizeof(response), "%s Monitoring stopped for %s\n", timebuf, src_dir);
+            write(pipe_out_fd, response, strlen(response));
+
+            snprintf(log_entry, sizeof(log_entry), "%s Monitoring stopped for %s\n", timebuf, src_dir);
+            write(log_fd, log_entry, strlen(log_entry));
+            return;
+        }
+        curr = curr->next;
+    }
+
+    //αν δεν βρέθηκε καθόλου
+    snprintf(response, sizeof(response), "%s Directory not monitored: %s\n", timebuf, src_dir);
+    write(pipe_out_fd, response, strlen(response));
+}
+
 
 Operation parse_operation(const char *op_str) {
     if (strcmp(op_str, "FULL") == 0) return OP_FULL;
@@ -533,7 +617,7 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
     }
 }
 
-int start_worker(const char *src, const char *dst, const char *filename, Operation op) {
+int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid) {
     if (active_worker_count >= MAX_WORKERS) {
         //ελέγχω μην ξεπεράσουν το όριο
         int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
@@ -557,13 +641,13 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         return -1;
     }
 
-    pid_t pid = fork();
-    if (pid == -1) {
+    *pid = fork();
+    if ( *pid == -1) {
         perror("fork");
         return -1;
     }
 
-    if (pid == 0) {
+    if ( *pid == 0) {
         dup2(to_worker[0], STDIN_FILENO);
         dup2(from_worker[1], STDOUT_FILENO);
         close(to_worker[1]);

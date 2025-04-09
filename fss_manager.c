@@ -150,7 +150,6 @@ int main(int argc, char *argv[]) {
         if (FD_ISSET(inotify_fd, &fds)) {
             handle_inotify_events(inotify_fd, log_fd);
         }
-        check_workers(); 
     }
     
     return 0;
