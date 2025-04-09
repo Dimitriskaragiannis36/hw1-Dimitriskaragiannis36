@@ -263,7 +263,7 @@ int perform_initial_sync(const char *src, const char *dst) {
             int result = start_worker(src, dst, "", OP_FULL, &pid);
             if (result > 0) {
                 entry->is_syncing = 1;
-                entry->worker_pid = pid;
+                entry->running_worker_pid = pid;
                 snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
@@ -314,7 +314,7 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
             pid_t pid;
             if (start_worker(src, dst, "", OP_FULL, &pid) > 0) {
                 entry->is_syncing = 1;
-                entry->worker_pid = pid;
+                entry->running_worker_pid = pid;
 
                 snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
@@ -401,7 +401,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     new_entry->active = 1;
     new_entry->error_count = 0;
     new_entry->is_syncing = 0;
-    new_entry->worker_pid = -1;
+    new_entry->running_worker_pid = -1;
     
     strcpy(new_entry->source_dir, source);
     strcpy(new_entry->target_dir, target);
@@ -710,7 +710,8 @@ void remove_worker_by_pid(pid_t pid) {
             //ξεκινά επόμενο από ουρά αν υπάρχει
             if (queue_start != queue_end) {
                 WorkerTask *t = &task_queue[queue_start];
-                start_worker(t->src, t->dst, t->filename, t->op);
+                pid_t new_pid;
+                start_worker(t->src, t->dst, t->filename, t->op, &new_pid);
                 queue_start = (queue_start + 1) % MAX_TASK_QUEUE;
             }
             break;

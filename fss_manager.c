@@ -128,7 +128,12 @@ int main(int argc, char *argv[]) {
         FD_SET(fd_in, &fds);
         FD_SET(inotify_fd, &fds);
     
-        if (select(max_fd + 1, &fds, NULL, NULL, NULL) == -1) {
+        int sel;
+        do {
+            sel = select(max_fd + 1, &fds, NULL, NULL, NULL);
+        } while (sel == -1 && errno == EINTR);  //eπανεκκίνηση αν διακοπεί από σήμα
+    
+        if (sel == -1) {
             perror("select");
             break;
         }

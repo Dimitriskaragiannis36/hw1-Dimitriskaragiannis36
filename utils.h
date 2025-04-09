@@ -17,6 +17,7 @@ typedef struct sync_info_mem_store {
     int error_count;
     int is_syncing; 
     int watch_descriptor; 
+    pid_t running_worker_pid;
     time_t last_sync_time;
     struct sync_info_mem_store *next;
 } sync_info_mem_store;

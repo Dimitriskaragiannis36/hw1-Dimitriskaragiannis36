@@ -50,6 +50,6 @@ int main(int argc, char *argv[]) {
     }
 
     const char *status = (error_offset > 0) ? "PARTIAL" : "SUCCESS";
-    send_exec_report(status, files_copied, files_skipped, error_buffer);*/
+    send_exec_report(status, files_copied, files_skipped, error_buffer);
     return 0;
 }
