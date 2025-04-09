@@ -34,7 +34,6 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
 
     char buffer[BUF_SIZE];
     ssize_t bytes_read;
-    size_t total = 0;
     char line[512];
     int line_pos = 0;
 
@@ -182,11 +181,9 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
     
                     pid_t pid;
                     start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid);
-                    curr->is_syncing = 1;
                     curr->running_worker_pid = pid;
                       
                     curr->last_sync_time = time(NULL);
-                    curr->is_syncing = 0;
     
                     now = time(NULL);
                     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
@@ -260,7 +257,7 @@ int perform_initial_sync(const char *src, const char *dst) {
             }
 
             pid_t pid;
-            int result = start_worker(src, dst, "", OP_FULL, &pid);
+            int result = start_worker(src, dst, "ALL", OP_FULL, &pid);
             if (result > 0) {
                 entry->is_syncing = 1;
                 entry->running_worker_pid = pid;
@@ -403,8 +400,8 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     new_entry->is_syncing = 0;
     new_entry->running_worker_pid = -1;
     
-    strcpy(new_entry->source_dir, source);
-    strcpy(new_entry->target_dir, target);
+    strncpy(new_entry->source_dir, source, sizeof(new_entry->source_dir));
+    strncpy(new_entry->target_dir, target, sizeof(new_entry->target_dir));
     new_entry->watch_descriptor = wd;
     new_entry->last_sync_time = time(NULL);
     new_entry->next = sync_list_head;
@@ -701,6 +698,14 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
 void remove_worker_by_pid(pid_t pid) {
     for (int i = 0; i < active_worker_count; i++) {
         if (active_workers[i].pid == pid) {
+
+            char buffer[1024];
+            ssize_t len;
+            while ((len = read(active_workers[i].pipe_read, buffer, sizeof(buffer) - 1)) > 0) {
+                buffer[len] = '\0';
+                write(log_fd, buffer, len);  //γράφουμε ακριβώς όσα διαβάσαμε
+            }
+
             close(active_workers[i].pipe_read);
             close(active_workers[i].pipe_write);
 

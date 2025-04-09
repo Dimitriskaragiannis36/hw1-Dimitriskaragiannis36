@@ -1,13 +1,16 @@
 CC = gcc
 CFLAGS = -Wall -g
 
-all: fss_manager fss_console fss_script.sh
+all: fss_manager fss_console worker fss_script.sh
 
 fss_manager: fss_manager.c utils.c
 	$(CC) $(CFLAGS) -o fss_manager fss_manager.c utils.c
 
 fss_console: fss_console.c utils.c
 	$(CC) $(CFLAGS) -o fss_console fss_console.c utils.c
+
+worker: worker.c utils.c
+	$(CC) $(CFLAGS) -o worker worker.c utils.c
 
 fss_script.sh:
 	chmod +x fss_script.sh
@@ -19,4 +22,4 @@ console: fss_console
 	./fss_console -l console_logfile
 
 clean:
-	rm -f fss_manager fss_console *.o manager_logfile console_logfile
+	rm -f fss_manager fss_console worker *.o manager_logfile console_logfile

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <errno.h>
 #include "utils.h" 
 
 #define PIPE_IN "fss_in"
@@ -48,8 +49,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    int pipe_in_fd = open(PIPE_IN, O_WRONLY);
-    if (pipe_in_fd == -1) {
+    int pipe_in_fd; 
+    int attempts = 0;
+    while ((pipe_in_fd = open(PIPE_IN, O_WRONLY | O_NONBLOCK)) == -1) {
+        if (errno == ENXIO && attempts++ < 5) {
+            sleep(1);
+            continue;
+        }
         perror("open fss_in");
         exit(EXIT_FAILURE);
     }
@@ -86,7 +92,7 @@ int main(int argc, char *argv[]) {
         strncmp(command, "sync ", 5) != 0 &&
         strncmp(command, "cancel ", 7) != 0 &&
         strcmp(command, "shutdown") != 0) {
-        break; 
+        continue; 
     }
 
     //ελέγχω arguments για να μην κρεμάει
@@ -114,7 +120,7 @@ int main(int argc, char *argv[]) {
 
 
         //αποστολή σε fss_manager
-        if (write(pipe_in_fd, command, strlen(command)) == -1) {
+        if (write(pipe_in_fd, command, strlen(command) + 1) == -1) {
             perror("write to fss_in");
             break;
         }

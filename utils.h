@@ -83,6 +83,8 @@ void handle_deleted(const char *dst_dir, const char *filename,
           int *files_copied, int *files_skipped,
           char *error_buffer, size_t *error_offset);
 
+          void send_exec_report(const char *status, int copied, int skipped, const char *error_buffer);
+
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
 
 int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid);

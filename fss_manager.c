@@ -85,14 +85,19 @@ int main(int argc, char *argv[]) {
     }
    
     //ανοίγω named pipes
-    int fd_in = open(PIPE_IN, O_RDONLY);
+    int fd_in = open(PIPE_IN, O_RDONLY | O_NONBLOCK);
     if (fd_in == -1) {
         perror("open PIPE_IN (manager)");
         exit(EXIT_FAILURE);
     }
 
-    int fd_out = open(PIPE_OUT, O_WRONLY);
-    if (fd_out == -1) {
+    int fd_out;
+    int attempts = 0;
+    while ((fd_out = open(PIPE_OUT, O_WRONLY)) == -1) {
+        if (errno == ENXIO && attempts++ < 5) {
+            sleep(1);
+            continue;
+        }
         perror("open PIPE_OUT (manager)");
         close(fd_in);
         exit(EXIT_FAILURE);
