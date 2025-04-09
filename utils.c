@@ -17,6 +17,13 @@ sync_info_mem_store *sync_list_head = NULL;
 int log_fd = -1;
 int global_inotify_fd = -1;
 
+ActiveWorker active_workers[MAX_WORKERS];
+int active_worker_count = 0;
+
+WorkerTask task_queue[MAX_TASK_QUEUE];
+int queue_start = 0, queue_end = 0;
+
+
 
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out) {
     int fd = open(config_path, O_RDONLY);
@@ -523,5 +530,61 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
     }
 }
 
+int start_worker(const char *src, const char *dst, const char *filename, Operation op) {
+    if (active_worker_count >= MAX_WORKERS) {
+        // πρόσθεσε στην ουρά
+        strncpy(task_queue[queue_end].src, src, sizeof(task_queue[queue_end].src));
+        strncpy(task_queue[queue_end].dst, dst, sizeof(task_queue[queue_end].dst));
+        strncpy(task_queue[queue_end].filename, filename, sizeof(task_queue[queue_end].filename));
+        task_queue[queue_end].op = op;
+        queue_end = (queue_end + 1) % MAX_TASK_QUEUE;
+        return 0;
+    }
+
+    int to_worker[2], from_worker[2];
+    if (pipe(to_worker) == -1 || pipe(from_worker) == -1) {
+        perror("pipe");
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) {
+        dup2(to_worker[0], STDIN_FILENO);
+        dup2(from_worker[1], STDOUT_FILENO);
+        close(to_worker[1]);
+        close(from_worker[0]);
+
+        char op_str[16];
+        switch (op) {
+            case OP_FULL: strcpy(op_str, "FULL"); break;
+            case OP_ADDED: strcpy(op_str, "ADDED"); break;
+            case OP_MODIFIED: strcpy(op_str, "MODIFIED"); break;
+            case OP_DELETED: strcpy(op_str, "DELETED"); break;
+        }
+
+        execl("./worker", "./worker", src, dst, filename, op_str, NULL);
+        perror("exec");
+        exit(1);
+    } else {
+        close(to_worker[0]);
+        close(from_worker[1]);
+
+        ActiveWorker *w = &active_workers[active_worker_count++];
+        w->pid = pid;
+        w->pipe_write = to_worker[1];
+        w->pipe_read = from_worker[0];
+        strncpy(w->src, src, sizeof(w->src));
+        strncpy(w->dst, dst, sizeof(w->dst));
+        strncpy(w->filename, filename, sizeof(w->filename));
+        w->op = op;
+
+        return 1;
+    }
+}
 
 

@@ -7,6 +7,8 @@
 #define PIPE_IN "fss_in"
 #define PIPE_OUT "fss_out"
 #define EVENT_BUF_LEN (1024 * (sizeof(struct inotify_event) + 16))
+#define MAX_WORKERS 10
+#define MAX_TASK_QUEUE 100
 
 typedef struct sync_info_mem_store {
     char source_dir[256];
@@ -26,6 +28,23 @@ typedef enum {
     OP_MODIFIED,
     OP_DELETED
 } Operation;
+
+typedef struct {
+    pid_t pid;
+    int pipe_write;
+    int pipe_read;
+    char src[256];
+    char dst[256];
+    char filename[256];
+    Operation op;
+} ActiveWorker;
+
+typedef struct {
+    char src[256];
+    char dst[256];
+    char filename[256];
+    Operation op;
+} WorkerTask;
 
 extern sync_info_mem_store *sync_list_head;
 extern int log_fd;
@@ -63,5 +82,7 @@ void handle_deleted(const char *dst_dir, const char *filename,
           char *error_buffer, size_t *error_offset);
 
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
+
+int start_worker(const char *src, const char *dst, const char *filename, Operation op);
 
 #endif //UTILS_H
