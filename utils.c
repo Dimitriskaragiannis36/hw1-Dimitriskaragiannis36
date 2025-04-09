@@ -597,14 +597,9 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
     }
 }
 
-void check_workers() {
-    for (int i = 0; i < active_worker_count; ) {
-        int status;
-        pid_t result = waitpid(active_workers[i].pid, &status, WNOHANG);
-        if (result == 0) {
-            i++;
-        } else if (result == -1 || WIFEXITED(status) || WIFSIGNALED(status)) {
-            //worker terminated
+void remove_worker_by_pid(pid_t pid) {
+    for (int i = 0; i < active_worker_count; i++) {
+        if (active_workers[i].pid == pid) {
             close(active_workers[i].pipe_read);
             close(active_workers[i].pipe_write);
 
@@ -617,6 +612,7 @@ void check_workers() {
                 start_worker(t->src, t->dst, t->filename, t->op);
                 queue_start = (queue_start + 1) % MAX_TASK_QUEUE;
             }
+            break;
         }
     }
 }

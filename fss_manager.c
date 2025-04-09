@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <dirent.h>
+#include <signal.h>
 #include "utils.h" 
 
 #define DEFAULT_WORKER_LIMIT 5
@@ -17,6 +18,15 @@
 
 void print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s -l <logfile> -c <config_file> -n <worker_limit>\n", progname);
+}
+
+void sigchld_handler(int signo) {
+    int status;
+    pid_t pid;
+
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        remove_worker_by_pid(pid);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -87,6 +97,16 @@ int main(int argc, char *argv[]) {
         close(fd_in);
         exit(EXIT_FAILURE);
     }
+
+    struct sigaction sa;
+    sa.sa_handler = sigchld_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }    
 
     //αρχικοποίηση inotify
     int inotify_fd = inotify_init1(0);
