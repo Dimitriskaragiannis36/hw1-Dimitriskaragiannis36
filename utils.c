@@ -11,7 +11,7 @@
 #include <sys/inotify.h>
 #include "utils.h"
 
-#define READ_BUFFER_SIZE 1024
+#define BUF_SIZE 1024
 
 sync_info_mem_store *sync_list_head = NULL;
 int log_fd = -1;
@@ -25,7 +25,7 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
         exit(EXIT_FAILURE);
     }
 
-    char buffer[READ_BUFFER_SIZE];
+    char buffer[BUF_SIZE];
     ssize_t bytes_read;
     size_t total = 0;
     char line[512];
@@ -471,9 +471,11 @@ void do_full_sync(const char *src, const char *dst,
     closedir(src_dir);
 }
 
-void handle_modified(const char *src, const char *dst, const char *filename) {
+void handle_modified(const char *src_dir, const char *dst_dir, const char *filename,
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
     //απλώς αντικαθιστά το αρχείο
-    handle_added(src, dst, filename, files_copied, files_skipped, error_buffer, error_offset);
+    handle_added(src_dir, dst_dir, filename, files_copied, files_skipped, error_buffer, error_offset);
 }
 
 void handle_deleted(const char *dst, const char *filename,
@@ -510,5 +512,16 @@ void send_exec_report(const char *status, int copied, int skipped, const char *e
 
     write(STDOUT_FILENO, "EXEC_REPORT_END\n", strlen("EXEC_REPORT_END\n"));
 }
+
+void log_error(const char *path, const char *msg, char *buffer, size_t *offset) {
+    int written = snprintf(buffer + *offset, BUF_SIZE - *offset,
+                           "[%s] %s\n", path, msg);
+    if (written > 0) {
+        *offset += written;
+        if (*offset >= BUF_SIZE)
+            *offset = BUF_SIZE - 1;  // για ασφάλεια
+    }
+}
+
 
 

@@ -62,4 +62,6 @@ void handle_deleted(const char *dst_dir, const char *filename,
           int *files_copied, int *files_skipped,
           char *error_buffer, size_t *error_offset);
 
+void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
+
 #endif //UTILS_H

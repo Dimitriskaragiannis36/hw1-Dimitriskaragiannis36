@@ -4,6 +4,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <getopt.h>
 #include <dirent.h>
@@ -50,7 +51,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //καθαρίζω logfiles και named pipes
+    /*//καθαρίζω logfiles και named pipes
     cleanup_previous_state(manager_logfile);
 
     //ανοίγω manager_logfile
@@ -58,7 +59,7 @@ int main(int argc, char *argv[]) {
     if (log_fd == -1) {
         perror("open");
         exit(EXIT_FAILURE);
-    }
+    }*/
 
     /*const char *message = "Debug fss_manager started\n";
     ssize_t bytes_written = write(log_fd, message, strlen(message));
@@ -69,7 +70,7 @@ int main(int argc, char *argv[]) {
     }*/
 
 
-    //δημιουργώ named pipes
+    /*//δημιουργώ named pipes
     if (mkfifo(PIPE_IN, 0666) == -1 && errno != EEXIST) {
         perror("mkfifo fss_in");
         close(log_fd);
@@ -139,7 +140,7 @@ int main(int argc, char *argv[]) {
             handle_inotify_events(inotify_fd, log_fd);
         }
         
-    }
+    }*/
 
     /*αρχικός συγχρονισμός
     sync_info_mem_store *curr = sync_list_head;
@@ -154,4 +155,42 @@ int main(int argc, char *argv[]) {
         curr = curr->next;
     }*/
 
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        exit(1);
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        exit(1);
+    }
+
+    if (pid == 0) {
+        //worker
+        close(pipefd[0]); //κλείνει το άκρο διαβάσματος
+        dup2(pipefd[1], STDOUT_FILENO); //ανακατευθύνει το stdout στο pipe
+        close(pipefd[1]); //κλείνει το άκρο γραψήματος
+
+        execl("./worker", "./worker", NULL);
+        perror("exec");  //αν φτάσει εδώ, απέτυχε
+        exit(1);
+    } else {
+        // Manager
+        close(pipefd[1]); //κλείνει το άκρο γραψήματος
+
+        char buffer[4096];
+        ssize_t nbytes;
+        while ((nbytes = read(pipefd[0], buffer, sizeof(buffer)-1)) > 0) {
+            buffer[nbytes] = '\0';
+            printf("%s", buffer);
+        }
+        
+
+        close(pipefd[0]);
+        wait(NULL); //απλό wait
+    }
+
+    return 0;
 }
