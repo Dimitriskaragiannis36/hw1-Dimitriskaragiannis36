@@ -85,4 +85,5 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
 
 int start_worker(const char *src, const char *dst, const char *filename, Operation op);
 
+void check_workers();
 #endif //UTILS_H

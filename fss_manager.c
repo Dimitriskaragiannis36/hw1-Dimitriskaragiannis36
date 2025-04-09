@@ -22,7 +22,7 @@ void print_usage(const char *progname) {
 int main(int argc, char *argv[]) {
     char *manager_logfile = NULL;
     char *config_file = NULL;
-    int worker_limit;
+    int worker_limit = DEFAULT_WORKER_LIMIT; //μπορεί να μην δώσει το -n
 
     int opt;
     while ((opt = getopt(argc, argv, "l:c:n::")) != -1) {
@@ -51,7 +51,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    /*//καθαρίζω logfiles και named pipes
+    //καθαρίζω logfiles και named pipes
     cleanup_previous_state(manager_logfile);
 
     //ανοίγω manager_logfile
@@ -59,18 +59,9 @@ int main(int argc, char *argv[]) {
     if (log_fd == -1) {
         perror("open");
         exit(EXIT_FAILURE);
-    }*/
+    }
 
-    /*const char *message = "Debug fss_manager started\n";
-    ssize_t bytes_written = write(log_fd, message, strlen(message));
-    if (bytes_written == -1) {
-        perror("write fss_manager problem");
-        close(log_fd);
-        exit(EXIT_FAILURE);
-    }*/
-
-
-    /*//δημιουργώ named pipes
+    //δημιουργώ named pipes
     if (mkfifo(PIPE_IN, 0666) == -1 && errno != EEXIST) {
         perror("mkfifo fss_in");
         close(log_fd);
@@ -139,58 +130,8 @@ int main(int argc, char *argv[]) {
         if (FD_ISSET(inotify_fd, &fds)) {
             handle_inotify_events(inotify_fd, log_fd);
         }
-        
-    }*/
-
-    /*αρχικός συγχρονισμός
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
-        pid_t pid = fork();
-        if (pid == 0) {
-            //παιδί -> worker process
-            perform_initial_sync(curr->source_dir, curr->target_dir);
-            exit(0);
-        }
-        //μπαμπάς -> συνεχίζει
-        curr = curr->next;
-    }*/
-
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        exit(1);
+        check_workers(); 
     }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        exit(1);
-    }
-
-    if (pid == 0) {
-        //worker
-        close(pipefd[0]); //κλείνει το άκρο διαβάσματος
-        dup2(pipefd[1], STDOUT_FILENO); //ανακατευθύνει το stdout στο pipe
-        close(pipefd[1]); //κλείνει το άκρο γραψήματος
-
-        execl("./worker", "./worker", NULL);
-        perror("exec");  //αν φτάσει εδώ, απέτυχε
-        exit(1);
-    } else {
-        // Manager
-        close(pipefd[1]); //κλείνει το άκρο γραψήματος
-
-        char buffer[4096];
-        ssize_t nbytes;
-        while ((nbytes = read(pipefd[0], buffer, sizeof(buffer)-1)) > 0) {
-            buffer[nbytes] = '\0';
-            printf("%s", buffer);
-        }
-        
-
-        close(pipefd[0]);
-        wait(NULL); //απλό wait
-    }
-
+    
     return 0;
 }

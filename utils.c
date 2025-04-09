@@ -230,10 +230,13 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                  timebuf, timebuf, timebuf);
         write(pipe_out_fd, response, strlen(response));
     
-        
-        
-        //sleep(1); 
-        //sleep(1); 
+        while (active_workers > 0) {
+            snprintf(response, sizeof(response),
+                     "%s Waiting for active workers to finish...\n", timebuf);
+            write(pipe_out_fd, response, strlen(response));
+            sleep(1); //περιμένουμε λίγο πριν ελέγξουμε ξανά
+        } 
+
         now = time(NULL);
         strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
         snprintf(response, sizeof(response),
@@ -532,12 +535,19 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
 
 int start_worker(const char *src, const char *dst, const char *filename, Operation op) {
     if (active_worker_count >= MAX_WORKERS) {
-        // πρόσθεσε στην ουρά
+        //ελέγχω μην ξεπεράσουν το όριο
+        int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
+        if (next_end == queue_start) {
+            fprintf(stderr, "Task queue overflow, dropping task\n");
+            return -1;
+        }
+
+        //πρόσθεσε στην ουρά
         strncpy(task_queue[queue_end].src, src, sizeof(task_queue[queue_end].src));
         strncpy(task_queue[queue_end].dst, dst, sizeof(task_queue[queue_end].dst));
         strncpy(task_queue[queue_end].filename, filename, sizeof(task_queue[queue_end].filename));
         task_queue[queue_end].op = op;
-        queue_end = (queue_end + 1) % MAX_TASK_QUEUE;
+        queue_end = next_end;
         return 0;
     }
 
@@ -586,5 +596,30 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         return 1;
     }
 }
+
+void check_workers() {
+    for (int i = 0; i < active_worker_count; ) {
+        int status;
+        pid_t result = waitpid(active_workers[i].pid, &status, WNOHANG);
+        if (result == 0) {
+            i++;
+        } else if (result == -1 || WIFEXITED(status) || WIFSIGNALED(status)) {
+            //worker terminated
+            close(active_workers[i].pipe_read);
+            close(active_workers[i].pipe_write);
+
+            //αντικαθιστά με τον τελευταίο
+            active_workers[i] = active_workers[--active_worker_count];
+
+            //ξεκινά επόμενο από ουρά αν υπάρχει
+            if (queue_start != queue_end) {
+                WorkerTask *t = &task_queue[queue_start];
+                start_worker(t->src, t->dst, t->filename, t->op);
+                queue_start = (queue_start + 1) % MAX_TASK_QUEUE;
+            }
+        }
+    }
+}
+
 
 
