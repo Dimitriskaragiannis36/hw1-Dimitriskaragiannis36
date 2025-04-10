@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <stdio.h>
 #include <errno.h>
@@ -112,13 +113,22 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
         char src[256], tgt[256];
         if (sscanf(cmd + 4, "%255s %255s", src, tgt) == 2) {
             int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
-            return result;  // απλό και καθαρό
+            if (result == 0) {
+                snprintf(response, sizeof(response), "%s Added watch: %s -> %s\n", timebuf, src, tgt);
+            } else {
+                snprintf(response, sizeof(response), "%s Failed to add watch: %s -> %s\n", timebuf, src, tgt);
+            }
+            write(pipe_out_fd, response, strlen(response));
+            return result;
+            
         }//άκυρο
     }
     else if (strncmp(cmd, "cancel ", 7) == 0) {
         char src[256];
         if (sscanf(cmd + 7, "%255s", src) == 1) {
             remove_watch_entry(src, inotify_fd, log_fd, pipe_out_fd);
+            snprintf(log_entry, sizeof(log_entry), "%s Canceled monitoring for %s\n", timebuf, src);
+            write(log_fd, log_entry, strlen(log_entry));            
         } else {
             snprintf(response, sizeof(response), "%s Invalid cancel command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
@@ -126,7 +136,11 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
     }
     else if (strncmp(cmd, "status ", 7) == 0) {
         char src[256];
-        sscanf(cmd + 7, "%255s", src);
+        if (sscanf(cmd + 7, "%255s", src) != 1) {
+            snprintf(response, sizeof(response), "%s Invalid sync command format\n", timebuf);
+            write(pipe_out_fd, response, strlen(response));
+            return 0;
+        }
         sync_info_mem_store *curr = sync_list_head;
         int found = 0;
         while (curr) {
@@ -159,7 +173,11 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
     }
     else if (strncmp(cmd, "sync ", 5) == 0) {
         char src[256];
-        sscanf(cmd + 5, "%255s", src);
+        if (sscanf(cmd + 5, "%255s", src) != 1) {
+            snprintf(response, sizeof(response), "%s Invalid sync command format\n", timebuf);
+            write(pipe_out_fd, response, strlen(response));
+            return 0;
+        }        
         sync_info_mem_store *curr = sync_list_head;
         int found = 0;
         while (curr) {
@@ -187,13 +205,17 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
     
                     now = time(NULL);
                     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                    /*snprintf(response, sizeof(response),
+                             "%s Sync completed %s -> %s Errors:%d\n",
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);*/
                     snprintf(response, sizeof(response),
-                             "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
+                             "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
                     write(pipe_out_fd, response, strlen(response));
-                    snprintf(log_entry, sizeof(log_entry),
+                    /*snprintf(log_entry, sizeof(log_entry),
                              "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);*/
+                    snprintf(response, sizeof(response),
+                             "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);                    
                     write(log_fd, log_entry, strlen(log_entry));
                 }
                 break;
@@ -230,8 +252,11 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
 
         return 1;
     }
-    
-return 0;  
+    else {
+        snprintf(response, sizeof(response), "%s Unknown command: %s\n", timebuf, cmd);
+        write(pipe_out_fd, response, strlen(response));
+    }
+    return 0;  
 }
 
 void get_timestamp(char *buffer, size_t size) {
@@ -240,7 +265,7 @@ void get_timestamp(char *buffer, size_t size) {
     strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
 }
 
-int perform_initial_sync(const char *src, const char *dst) {
+int perform_initial_sync(const char *src, const char *dst, int log_fd) {
     char msg[512];
     time_t now = time(NULL);
     char timebuf[64];
@@ -261,7 +286,7 @@ int perform_initial_sync(const char *src, const char *dst) {
             if (result > 0) {
                 entry->is_syncing = 1;
                 entry->running_worker_pid = pid;
-                snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                snprintf(msg, sizeof(msg), "%s Syncing directory WORKER DEBUG: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
@@ -281,7 +306,6 @@ int perform_initial_sync(const char *src, const char *dst) {
     write(STDERR_FILENO, msg, strlen(msg));
     return -1;
 }
-
 
 sync_info_mem_store* find_entry_by_watch(int wd) {
     sync_info_mem_store *curr = sync_list_head;
@@ -333,7 +357,6 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
     fprintf(stderr, "%s", msg);
     return -1;
 }
-
 
 void handle_inotify_events(int inotify_fd, int log_fd) {
     char buffer[EVENT_BUF_LEN];
@@ -407,7 +430,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     new_entry->next = sync_list_head;
     sync_list_head = new_entry;
 
-    perform_initial_sync(source, target);
+    perform_initial_sync(source, target, log_fd);
 
     char msg[512];
     time_t now = time(NULL);
@@ -455,7 +478,6 @@ void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pip
     snprintf(response, sizeof(response), "%s Directory not monitored: %s\n", timebuf, src_dir);
     write(pipe_out_fd, response, strlen(response));
 }
-
 
 Operation parse_operation(const char *op_str) {
     if (strcmp(op_str, "FULL") == 0) return OP_FULL;
@@ -675,12 +697,40 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
             case OP_DELETED: strcpy(op_str, "DELETED"); break;
         }
 
+
+        fprintf(stderr, "[start_worker] Forked child (pid=%d), calling exec with args:\n", getpid());
+        fprintf(stderr, "  src = %s\n  dst = %s\n  filename = %s\n  op = %s\n", src, dst, filename, op_str);
+
         execl("./worker", "./worker", src, dst, filename, op_str, NULL);
+        const char *error_msg = "EXEC_FAILED\n";
+        write(STDOUT_FILENO, error_msg, strlen(error_msg));
         perror("exec");
         exit(1);
     } else {
         close(to_worker[0]);
         close(from_worker[1]);
+
+        int flags = fcntl(from_worker[0], F_GETFL, 0);
+        fcntl(from_worker[0], F_SETFL, flags | O_NONBLOCK);
+        
+        char buffer[256] = {0};
+        usleep(100000); 
+        
+        int n = read(from_worker[0], buffer, sizeof(buffer) - 1);
+        if (n > 0) {
+        buffer[n] = '\0';
+        fprintf(stderr, "[parent] Received from worker: %s\n", buffer);
+        
+            if (strstr(buffer, "EXEC_FAILED") != NULL) {
+                fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
+                close(to_worker[1]);
+                close(from_worker[0]);
+                waitpid(*pid, NULL, 0);
+                return -1;
+            }
+        }
+        
+        fprintf(stderr, "[parent] Worker forked successfully (pid=%d)\n", *pid);
 
         ActiveWorker *w = &active_workers[active_worker_count++];
         w->pid = *pid;

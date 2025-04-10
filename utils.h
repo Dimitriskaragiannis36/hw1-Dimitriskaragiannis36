@@ -61,7 +61,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
 void get_timestamp(char *buffer, size_t size);
 
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out);
-int perform_initial_sync(const char *src, const char *dst);
+int perform_initial_sync(const char *src, const char *dst, int log_fd);
 int add_watch_entry(int inotify_fd, const char *source, const char *target, int log_fd, int fd_out);
 void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pipe_out_fd);
 void handle_inotify_events(int inotify_fd, int log_fd);
