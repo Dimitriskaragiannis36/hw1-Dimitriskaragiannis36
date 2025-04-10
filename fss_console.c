@@ -126,17 +126,27 @@ int main(int argc, char *argv[]) {
         }
 
         //απάντηση από fss_manager
-        char response[1024];
-        ssize_t bytes_read = read(pipe_out_fd, response, sizeof(response) - 1);
-        if (bytes_read > 0) {
-            response[bytes_read] = '\0';
+        char response[8192]; 
+        ssize_t total_read = 0;
+        
+        while (1) {
+            ssize_t bytes_read = read(pipe_out_fd, response + total_read, sizeof(response) - total_read - 1);
+            if (bytes_read <= 0) {
+                break;
+            }
+            total_read += bytes_read;
+            if (total_read >= sizeof(response) - 1) {
+                break; 
+            }
+        }
+        
+        if (total_read > 0) {
+            response[total_read] = '\0';
             printf("%s\n", response);
-            
+        
             int len = snprintf(log_entry, sizeof(log_entry), "%s\n", response);
             write(log_fd, log_entry, len);
-
-
-            // αν είναι shutdown, τερμάτισε αφού διαβάσεις την απάντηση
+        
             if (strncmp(command, "shutdown", 8) == 0) {
                 break;
             }

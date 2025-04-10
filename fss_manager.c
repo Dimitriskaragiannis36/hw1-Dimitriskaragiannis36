@@ -15,19 +15,29 @@
 #define PIPE_IN "fss_in"  
 #define PIPE_OUT "fss_out"
 #define MAX_CMD_LEN 256
+#define MAX_ACTIVE_WORKERS 10  
+
+
+extern ActiveWorker active_workers[];
+extern int active_worker_count; 
 
 void print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s -l <logfile> -c <config_file> -n <worker_limit>\n", progname);
 }
 
+volatile sig_atomic_t dead_pids[256];
+volatile sig_atomic_t dead_count = 0;
+
 void sigchld_handler(int signo) {
     int status;
     pid_t pid;
 
+    //αποθηκεύει ποιοι workers πέθαναν
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        remove_worker_by_pid(pid);
+        dead_pids[dead_count++] = pid;
     }
 }
+
 
 int main(int argc, char *argv[]) {
     char *manager_logfile = NULL;
@@ -132,7 +142,13 @@ int main(int argc, char *argv[]) {
         FD_ZERO(&fds);
         FD_SET(fd_in, &fds);
         FD_SET(inotify_fd, &fds);
-    
+        
+        for (int i = 0; i < active_worker_count; i++) {
+            FD_SET(active_workers[i].pipe_read, &fds);
+            if (active_workers[i].pipe_read > max_fd)
+                max_fd = active_workers[i].pipe_read;
+        }
+
         int sel;
         do {
             sel = select(max_fd + 1, &fds, NULL, NULL, NULL);
@@ -160,6 +176,51 @@ int main(int argc, char *argv[]) {
         if (FD_ISSET(inotify_fd, &fds)) {
             handle_inotify_events(inotify_fd, log_fd);
         }
+    
+        // --- Διάβασμα EXEC_REPORT από pipe των workers ---
+        for (int i = 0; i < active_worker_count; ) {
+            int fd = active_workers[i].pipe_read;
+    
+            if (FD_ISSET(fd, &fds)) {
+                char buffer[1024];
+                ssize_t len;
+    
+                //διάβασε ό,τι έχει γραφτεί από τον worker
+                while ((len = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
+                    buffer[len] = '\0';
+                    write(log_fd, buffer, len);
+                }
+                //αφαίρεσέ τον
+                remove_worker_by_pid(active_workers[i].pid);
+    
+                //μην αυξήσεις το i — μπορεί να έχει γίνει swap
+                continue;
+            }
+    
+            i++;  //αν δεν έγινε read
+        }
+    
+        //χειρισμός dead_pids από SIGCHLD ---
+        for (int i = 0; i < dead_count; i++) {
+            pid_t pid = dead_pids[i];
+    
+            //βρες τον worker και διάβασε πριν τον αφαιρέσεις
+            for (int j = 0; j < active_worker_count; j++) {
+                if (active_workers[j].pid == pid) {
+                    char buffer[1024];
+                    ssize_t len;
+    
+                    while ((len = read(active_workers[j].pipe_read, buffer, sizeof(buffer) - 1)) > 0) {
+                        buffer[len] = '\0';
+                        write(log_fd, buffer, len);
+                    }
+    
+                    remove_worker_by_pid(pid);
+                    break;
+                }
+            }
+        }
+        dead_count = 0;
     }
     
     return 0;

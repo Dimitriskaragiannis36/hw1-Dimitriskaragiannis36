@@ -214,7 +214,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                     /*snprintf(log_entry, sizeof(log_entry),
                              "%s Sync completed %s -> %s Errors:%d\n",
                              timebuf, curr->source_dir, curr->target_dir, curr->error_count);*/
-                    snprintf(response, sizeof(response),
+                    snprintf(log_entry, sizeof(log_entry),
                              "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);                    
                     write(log_fd, log_entry, strlen(log_entry));
                 }
@@ -628,7 +628,7 @@ void send_exec_report(const char *status, int copied, int skipped, const char *e
 
     write(STDOUT_FILENO, "EXEC_REPORT_START\n", strlen("EXEC_REPORT_START\n"));
 
-    write(STDOUT_FILENO, "STATUS: ", strlen("STATUS: "));
+    write(STDOUT_FILENO, "STATUSok: ", strlen("STATUSok: "));
     write(STDOUT_FILENO, status, strlen(status));
     write(STDOUT_FILENO, "\n", 1);
 
@@ -713,24 +713,41 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         int flags = fcntl(from_worker[0], F_GETFL, 0);
         fcntl(from_worker[0], F_SETFL, flags | O_NONBLOCK);
         
-        char buffer[256] = {0};
-        usleep(100000); 
+        char buffer[1024] = {0};
+        char temp[256];
+        int total_read = 0;
+        int found_end = 0;
         
-        int n = read(from_worker[0], buffer, sizeof(buffer) - 1);
-        if (n > 0) {
-        buffer[n] = '\0';
-        fprintf(stderr, "[parent] Received from worker: %s\n", buffer);
+        usleep(100000);  //μικρή καθυστέρηση για να ξεκινήσει ο worker
         
-            if (strstr(buffer, "EXEC_FAILED") != NULL) {
-                fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
-                close(to_worker[1]);
-                close(from_worker[0]);
-                waitpid(*pid, NULL, 0);
-                return -1;
+        while (1) {
+            int n = read(from_worker[0], temp, sizeof(temp) - 1);
+            if (n <= 0) break;  // Δεν υπάρχει άλλο διαθέσιμο, pipe είναι non-blocking
+        
+            temp[n] = '\0';
+            if (total_read + n < sizeof(buffer) - 1) {
+                strcat(buffer, temp);
+                total_read += n;
+            }
+        
+            if (strstr(buffer, "EXEC_REPORT_END") != NULL) {
+                found_end = 1;
+                break;
             }
         }
         
-        fprintf(stderr, "[parent] Worker forked successfully (pid=%d)\n", *pid);
+        if (strstr(buffer, "EXEC_FAILED") != NULL) {
+            fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
+            close(to_worker[1]);
+            close(from_worker[0]);
+            waitpid(*pid, NULL, 0);
+            return -1;
+        }
+        
+        if (found_end) {
+            fprintf(stderr, "[parent] Received full report from worker:\n%s\n", buffer);
+        }
+        
 
         ActiveWorker *w = &active_workers[active_worker_count++];
         w->pid = *pid;
@@ -748,21 +765,11 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
 void remove_worker_by_pid(pid_t pid) {
     for (int i = 0; i < active_worker_count; i++) {
         if (active_workers[i].pid == pid) {
-
-            char buffer[1024];
-            ssize_t len;
-            while ((len = read(active_workers[i].pipe_read, buffer, sizeof(buffer) - 1)) > 0) {
-                buffer[len] = '\0';
-                write(log_fd, buffer, len);  //γράφουμε ακριβώς όσα διαβάσαμε
-            }
-
             close(active_workers[i].pipe_read);
             close(active_workers[i].pipe_write);
 
-            //αντικαθιστά με τον τελευταίο
             active_workers[i] = active_workers[--active_worker_count];
 
-            //ξεκινά επόμενο από ουρά αν υπάρχει
             if (queue_start != queue_end) {
                 WorkerTask *t = &task_queue[queue_start];
                 pid_t new_pid;
@@ -773,6 +780,3 @@ void remove_worker_by_pid(pid_t pid) {
         }
     }
 }
-
-
-
