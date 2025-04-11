@@ -103,7 +103,7 @@ int main(int argc, char *argv[]) {
 
     int fd_out;
     int attempts = 0;
-    while ((fd_out = open(PIPE_OUT, O_WRONLY)) == -1) {
+    while ((fd_out = open(PIPE_OUT, O_WRONLY | O_NONBLOCK)) == -1) {
         if (errno == ENXIO && attempts++ < 5) {
             sleep(1);
             continue;

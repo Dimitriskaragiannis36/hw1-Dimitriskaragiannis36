@@ -87,7 +87,7 @@ void handle_deleted(const char *dst_dir, const char *filename,
 
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
 
-int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid);
+int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors);
 
 void remove_worker_by_pid(pid_t pid);
 #endif //UTILS_H

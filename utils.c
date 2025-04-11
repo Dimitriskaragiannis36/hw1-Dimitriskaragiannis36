@@ -188,35 +188,51 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                              "%s Sync already in progress %s\n", timebuf, src);
                     write(pipe_out_fd, response, strlen(response));
                 } else {
-                    //δοκιμαστικό sync
                     curr->is_syncing = 1;
-                    snprintf(response, sizeof(response),
-                             "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
-                    write(pipe_out_fd, response, strlen(response));
-                    snprintf(log_entry, sizeof(log_entry),
-                             "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
-                    write(log_fd, log_entry, strlen(log_entry));
-    
+            
+                    char combined_response[2048];
+                    now = time(NULL);
+                    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                    snprintf(combined_response, sizeof(combined_response),
+                            "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
+
                     pid_t pid;
-                    start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid);
+                    int err_count = 0;
+                    start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid, &err_count);
                     curr->running_worker_pid = pid;
                       
                     curr->last_sync_time = time(NULL);
-    
+                    curr->is_syncing = 0;
+
                     now = time(NULL);
                     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                    snprintf(combined_response + strlen(combined_response), sizeof(combined_response) - strlen(combined_response),
+                            "%s Sync completed %s -> %s Errors:%d\n", timebuf, curr->source_dir, curr->target_dir, err_count);
+
+                    //αποστολή του συνδυασμένου μηνύματος
+                    write(pipe_out_fd, combined_response, strlen(combined_response));
+
+                    //καταγραφή στο logfile
+                    snprintf(log_entry, sizeof(log_entry),
+                            "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
+                    write(log_fd, log_entry, strlen(log_entry));
+
+                    snprintf(log_entry, sizeof(log_entry),
+                            "%s Sync completed %s -> %s Errors:%d\n", timebuf, curr->source_dir, curr->target_dir, err_count);
+                    write(log_fd, log_entry, strlen(log_entry));
+        
                     /*snprintf(response, sizeof(response),
                              "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);*/
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
                     snprintf(response, sizeof(response),
                              "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
                     write(pipe_out_fd, response, strlen(response));
-                    /*snprintf(log_entry, sizeof(log_entry),
+                    snprintf(log_entry, sizeof(log_entry),
                              "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);*/
+                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
                     snprintf(log_entry, sizeof(log_entry),
                              "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);                    
-                    write(log_fd, log_entry, strlen(log_entry));
+                    write(log_fd, log_entry, strlen(log_entry));*/
                 }
                 break;
             }
@@ -269,24 +285,34 @@ int perform_initial_sync(const char *src, const char *dst, int log_fd) {
     char msg[512];
     time_t now = time(NULL);
     char timebuf[64];
-    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
 
     sync_info_mem_store *entry = sync_list_head;
     while (entry) {
         if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
             if (entry->is_syncing) {
+                now = time(NULL);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
                 snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             }
 
+            now = time(NULL);
+            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+            snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+            write(log_fd, msg, strlen(msg));
+            write(STDOUT_FILENO, msg, strlen(msg));
+
             pid_t pid;
-            int result = start_worker(src, dst, "ALL", OP_FULL, &pid);
+            int err_count = 0;
+            int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count);
             if (result > 0) {
-                entry->is_syncing = 1;
+                entry->is_syncing = 0;
                 entry->running_worker_pid = pid;
-                snprintf(msg, sizeof(msg), "%s Syncing directory WORKER DEBUG: %s -> %s\n", timebuf, src, dst);
+                now = time(NULL);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
@@ -316,6 +342,15 @@ sync_info_mem_store* find_entry_by_watch(int wd) {
     return NULL;
 }
 
+sync_info_mem_store* find_entry_by_source_dir(const char *src) {
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (strcmp(curr->source_dir, src) == 0) return curr;
+        curr = curr->next;
+    }
+    return NULL;
+}
+
 int sync_on_change(const char *src, const char *dst, int log_fd) {
     char msg[512];
     time_t now = time(NULL);
@@ -333,13 +368,25 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
             }
 
             pid_t pid;
-            if (start_worker(src, dst, "", OP_FULL, &pid) > 0) {
-                entry->is_syncing = 1;
+            int err_count = 0;
+            time_t now = time(NULL);
+            char timebuf[64];
+            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+            
+            if (start_worker(src, dst, "", OP_FULL, &pid, &err_count) > 0) {
+                entry->is_syncing = 0;
                 entry->running_worker_pid = pid;
 
-                snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+                snprintf(msg, sizeof(msg), "%s Syncing directoryOK3: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
-                printf("%s", msg);
+                write(STDOUT_FILENO, msg, strlen(msg));
+
+                now = time(NULL);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+
+                snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             } else {
                 snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
@@ -430,10 +477,6 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     new_entry->next = sync_list_head;
     sync_list_head = new_entry;
 
-    //dprintf(fd_out, "DEBUG: Before perform_initial_sync(%s, %s)\n", source, target);
-    perform_initial_sync(source, target, log_fd);
-    //dprintf(fd_out, "DEBUG: After perform_initial_sync(%s, %s)\n", source, target);
-
     char msg[512];
     time_t now = time(NULL);
     struct tm *timeinfo = localtime(&now); 
@@ -445,6 +488,10 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     write(log_fd, msg, strlen(msg));          
     write(fd_out, msg, strlen(msg));    
 
+    //dprintf(fd_out, "DEBUG: Before perform_initial_sync(%s, %s)\n", source, target);
+    perform_initial_sync(source, target, log_fd);
+    //dprintf(fd_out, "DEBUG: After perform_initial_sync(%s, %s)\n", source, target);
+    new_entry->is_syncing = 0; 
     return 0;
 }
 
@@ -655,7 +702,7 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
     }
 }
 
-int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid) {
+int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors) {
     if (active_worker_count >= MAX_WORKERS) {
         //ελέγχω μην ξεπεράσουν το όριο
         int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
@@ -746,10 +793,23 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
             return -1;
         }
         
+        int local_errors = 0;
+
         if (found_end) {
             fprintf(stderr, "[parent] Received full report from worker:\n%s\n", buffer);
-        }
+            char *err_line = strstr(buffer, "ERRORS:");
+            if (err_line) {
+                sscanf(err_line, "ERRORS:%d", &local_errors);
         
+            }
+        }
+
+        if (errors) *errors = local_errors;
+
+        sync_info_mem_store *info = find_entry_by_source_dir(src);
+        if (info != NULL) {
+            info->is_syncing = 0;
+        }        
 
         ActiveWorker *w = &active_workers[active_worker_count++];
         w->pid = *pid;
@@ -775,7 +835,8 @@ void remove_worker_by_pid(pid_t pid) {
             if (queue_start != queue_end) {
                 WorkerTask *t = &task_queue[queue_start];
                 pid_t new_pid;
-                start_worker(t->src, t->dst, t->filename, t->op, &new_pid);
+                int err_count = 0;
+                start_worker(t->src, t->dst, t->filename, t->op, &new_pid, &err_count);
                 queue_start = (queue_start + 1) % MAX_TASK_QUEUE;
             }
             break;
