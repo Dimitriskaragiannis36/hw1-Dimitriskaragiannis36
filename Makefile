@@ -16,7 +16,7 @@ fss_script.sh:
 	chmod +x fss_script.sh
 
 run: fss_manager
-	./fss_manager -l manager_logfile -c config_file -n 2 
+	./fss_manager -l manager_logfile -c config_file -n 3 
 
 console: fss_console
 	./fss_console -l console_logfile

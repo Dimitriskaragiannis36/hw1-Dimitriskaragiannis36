@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <errno.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include "utils.h" 
 
 #define PIPE_IN "fss_in"
@@ -68,7 +70,7 @@ int main(int argc, char *argv[]) {
     }
 
     char command[MAX_CMD_LEN];
-
+    fcntl(pipe_out_fd, F_SETFL, O_NONBLOCK);
     while (1) {
         print_prompt();
         if (!fgets(command, MAX_CMD_LEN, stdin)) {
@@ -88,35 +90,35 @@ int main(int argc, char *argv[]) {
         
         //ελέγχω αν είναι σωστή εντολή
         if (strncmp(command, "add ", 4) != 0 &&
-        strncmp(command, "status ", 7) != 0 &&
-        strncmp(command, "sync ", 5) != 0 &&
-        strncmp(command, "cancel ", 7) != 0 &&
-        strcmp(command, "shutdown") != 0) {
-        continue; 
-    }
-
-    //ελέγχω arguments για να μην κρεμάει
-    if (strncmp(command, "add ", 4) == 0) {
-        char src[256], trg[256];
-        if (sscanf(command + 4, "%255s %255s", src, trg) != 2) {
-            printf("Usage: add <source_dir> <target_dir>\n");
-            int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid add usage: %s\n", timestamp, command);
-            write(log_fd, log_entry, len);
-            continue;
+            strncmp(command, "status ", 7) != 0 &&
+            strncmp(command, "sync ", 5) != 0 &&
+            strncmp(command, "cancel ", 7) != 0 &&
+            strcmp(command, "shutdown") != 0) {
+            continue; 
         }
-    } else if (strncmp(command, "status ", 7) == 0 || strncmp(command, "sync ", 5) == 0 || strncmp(command, "cancel ", 7) == 0) {
-        char src[256];
-        if (sscanf(strchr(command, ' ') + 1, "%255s", src) != 1) {
-            printf("Usage: %s <source_dir>\n", strtok(command, " "));
-            int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid usage: %s\n", timestamp, command);
-            write(log_fd, log_entry, len);
-            continue;
-        }
-    }
 
-    // Log command
-    int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
-    write(log_fd, log_entry, len);
+        //ελέγχω arguments για να μην κρεμάει
+        if (strncmp(command, "add ", 4) == 0) {
+            char src[256], trg[256];
+            if (sscanf(command + 4, "%255s %255s", src, trg) != 2) {
+                printf("Usage: add <source_dir> <target_dir>\n");
+                int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid add usage: %s\n", timestamp, command);
+                write(log_fd, log_entry, len);
+                continue;
+            }
+        } else if (strncmp(command, "status ", 7) == 0 || strncmp(command, "sync ", 5) == 0 || strncmp(command, "cancel ", 7) == 0) {
+            char src[256];
+            if (sscanf(strchr(command, ' ') + 1, "%255s", src) != 1) {
+                printf("Usage: %s <source_dir>\n", strtok(command, " "));
+                int len = snprintf(log_entry, sizeof(log_entry), "%s Invalid usage: %s\n", timestamp, command);
+                write(log_fd, log_entry, len);
+                continue;
+            }
+        }
+
+        // Log command
+        int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
+        write(log_fd, log_entry, len);
 
 
         //αποστολή σε fss_manager
@@ -126,36 +128,33 @@ int main(int argc, char *argv[]) {
         }
 
         //απάντηση από fss_manager
-        char response[8192]; 
-        ssize_t total_read = 0;
-        
-        while (1) {
-            ssize_t bytes_read = read(pipe_out_fd, response + total_read, sizeof(response) - total_read - 1);
-            if (bytes_read <= 0) {
-                break;
-            }
-            total_read += bytes_read;
-            if (total_read >= sizeof(response) - 1) {
-                break; 
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(pipe_out_fd, &read_fds);
+
+        int ready = select(pipe_out_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (ready == -1) {
+            perror("select");
+            break;
+        }
+
+        if (FD_ISSET(pipe_out_fd, &read_fds)) {
+            char response[8192];
+            ssize_t bytes_read = read(pipe_out_fd, response, sizeof(response) - 1);
+            if (bytes_read > 0) {
+                response[bytes_read] = '\0';
+                printf("%s\n", response);
+
+                int len = snprintf(log_entry, sizeof(log_entry), "%s\n", response);
+                write(log_fd, log_entry, len);
+                if (strncmp(command, "shutdown", 8) == 0) {
+                    break;
+                }
+            } else {
+                printf("No response from manager.\n");
             }
         }
-        
-        if (total_read > 0) {
-            response[total_read] = '\0';
-            printf("%s\n", response);
-        
-            int len = snprintf(log_entry, sizeof(log_entry), "%s\n", response);
-            write(log_fd, log_entry, len);
-        
-            if (strncmp(command, "shutdown", 8) == 0) {
-                break;
-            }
-        } else {
-            printf("No response from manager.\n");
-            if (strncmp(command, "shutdown", 8) == 0) {
-                break;
-            }
-        }
+      
     }
 
     close(pipe_in_fd);

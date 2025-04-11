@@ -35,7 +35,7 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
 
     char buffer[BUF_SIZE];
     ssize_t bytes_read;
-    char line[512];
+    char line[1024];
     int line_pos = 0;
 
     while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
@@ -46,7 +46,7 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
 
                 char src[256], tgt[256];
                 if (sscanf(line, "%255s %255s", src, tgt) == 2) {
-                    add_watch_entry(inotify_fd, src, tgt, log_fd, fd_out);
+                   add_watch_entry(inotify_fd, src, tgt, log_fd, fd_out);
                 }
             } else if (line_pos < (int)sizeof(line) - 1) {
                 line[line_pos++] = buffer[i];
@@ -430,7 +430,9 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     new_entry->next = sync_list_head;
     sync_list_head = new_entry;
 
+    //dprintf(fd_out, "DEBUG: Before perform_initial_sync(%s, %s)\n", source, target);
     perform_initial_sync(source, target, log_fd);
+    //dprintf(fd_out, "DEBUG: After perform_initial_sync(%s, %s)\n", source, target);
 
     char msg[512];
     time_t now = time(NULL);
