@@ -113,12 +113,12 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
         char src[256], tgt[256];
         if (sscanf(cmd + 4, "%255s %255s", src, tgt) == 2) {
             int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
-            if (result == 0) {
+            /*if (result == 0) {
                 snprintf(response, sizeof(response), "%s Added watch: %s -> %s\n", timebuf, src, tgt);
             } else {
                 snprintf(response, sizeof(response), "%s Failed to add watch: %s -> %s\n", timebuf, src, tgt);
             }
-            write(pipe_out_fd, response, strlen(response));
+            write(pipe_out_fd, response, strlen(response));*/
             return result;
             
         }//άκυρο
@@ -127,8 +127,8 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
         char src[256];
         if (sscanf(cmd + 7, "%255s", src) == 1) {
             remove_watch_entry(src, inotify_fd, log_fd, pipe_out_fd);
-            snprintf(log_entry, sizeof(log_entry), "%s Canceled monitoring for %s\n", timebuf, src);
-            write(log_fd, log_entry, strlen(log_entry));            
+            /*snprintf(log_entry, sizeof(log_entry), "%s Canceled monitoring for %s\n", timebuf, src);
+            write(log_fd, log_entry, strlen(log_entry)); */           
         } else {
             snprintf(response, sizeof(response), "%s Invalid cancel command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
@@ -439,7 +439,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     struct tm *timeinfo = localtime(&now); 
     char time_str[64];
     strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
-    snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring startedok for %s\n",
+    snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring started for %s\n",
     time_str, source, target, time_str, source);
 
     write(log_fd, msg, strlen(msg));          
