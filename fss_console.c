@@ -120,6 +120,9 @@ int main(int argc, char *argv[]) {
         int len = snprintf(log_entry, sizeof(log_entry), "%s Command %s\n", timestamp, command);
         write(log_fd, log_entry, len);
 
+        //flush any leftover data in fss_out before sending new command
+        char flush_buf[1024];
+        while (read(pipe_out_fd, flush_buf, sizeof(flush_buf)) > 0);
 
         //αποστολή σε fss_manager
         if (write(pipe_in_fd, command, strlen(command) + 1) == -1) {

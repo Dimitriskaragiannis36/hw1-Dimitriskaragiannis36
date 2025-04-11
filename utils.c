@@ -439,7 +439,7 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     struct tm *timeinfo = localtime(&now); 
     char time_str[64];
     strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
-    snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring started for %s\n",
+    snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring startedok for %s\n",
     time_str, source, target, time_str, source);
 
     write(log_fd, msg, strlen(msg));          
