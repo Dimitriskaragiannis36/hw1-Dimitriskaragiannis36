@@ -1,11 +1,15 @@
 #!/bin/bash
 
+print_usage() {
+    echo "Usage: $0 -p <logfile|directory> -c <purge|listAll|listMonitored|listStopped>"
+}
+
 #ελέγχω τα ορίσματα
 while getopts "p:c:" opt; do
   case $opt in
     p) path="$OPTARG" ;;
     c) command="$OPTARG" ;;
-    *) echo "Usage: $0 -p <path> -c <command>"; exit 1 ;;
+    *) print_usage; exit 1 ;;
   esac
 done
 
@@ -14,14 +18,14 @@ if [ -z "$path" ] || [ -z "$command" ]; then
   exit 1
 fi
 
-print_usage() {
-    echo "Usage: $0 -p <logfile> -c <purge|listAll|listMonitored|listStopped>"
-}
-
+if [ -d "$path" ] && [ "$command" != "purge" ]; then
+    echo "Error: Can only run 'purge' with directory paths"
+    exit 1
+fi
 
 case "$command" in
     purge)
-        echo "Purging $path..."
+        echo "Deleting $path..."
         if [ -d "$path" ] || [ -f "$path" ]; then
             rm -rf "$path"
             echo "Purge complete."
@@ -32,33 +36,59 @@ case "$command" in
 
     listAll)
         awk '
-        /\[.*\] \[\/.*\] \[\/.*\] \[[0-9]+\] \[.*\]/ {
-            source = $2
-            target = $3
-            timestamp = $1 " " $2
+        /^\[[0-9]{4}-[0-9]{2}-[0-9]{2}/ && /\[[\/]/ && /FULL|ADDED|MODIFIED|DELETED/ {
+            timestamp = gensub(/^\[([^\]]+)\].*/, "\\1", "g", $0)
+            source = gensub(/^.*\[([^\]]+)\] \[([^\]]+)\].*/, "\\1", "g", $0)
+            target = gensub(/^.*\[([^\]]+)\] \[([^\]]+)\].*/, "\\2", "g", $0)
             getline
-            status = $1
-            print source, "->", target, "[Last Sync:", timestamp, "]", "[" status "]"
+            status = gensub(/^\[([A-Z]+)\].*/, "\\1", "g", $0)
+            print source " -> " target " [Last Sync: " timestamp "] [" status "]"
         }
         ' "$path"
         ;;
 
     listMonitored)
-        grep "Monitoring started for" "$path" | while read -r line; do
-            dir=$(echo "$line" | grep -oP "/[^ ]+")
-            line=$(grep "Sync completed $dir" "$path" | tail -n 1)
-            last_sync=$(echo "$line" | grep -oP '\[\K[^\]]+')
-            target=$(echo "$line" | awk -F'-> ' '{print $2}' | awk '{print $1}')
+        declare -A monitored
+
+        while IFS= read -r line; do
+            if [[ "$line" =~ Monitoring\ started\ for\ (.+) ]]; then
+                dir="${BASH_REMATCH[1]}"
+                monitored["$dir"]=1
+            elif [[ "$line" =~ Monitoring\ stopped\ for\ (.+) ]]; then
+                dir="${BASH_REMATCH[1]}"
+                unset monitored["$dir"]
+            fi
+        done < "$path"
+
+        for dir in "${!monitored[@]}"; do
+            sync_line=$(grep "Sync completed $dir" "$path" | tail -1)
+            last_sync=$(echo "$sync_line" | grep -oP '^\[\K[^]]+')
+            target=$(echo "$sync_line" | awk -F'->' '{print $2}' | cut -d' ' -f2)
             echo "$dir -> $target [Last Sync: $last_sync]"
         done
         ;;
 
     listStopped)
-        grep "Monitoring stopped for" "$path" | while read -r line; do
-            dir=$(echo "$line" | grep -oP "/[^ ]+")
-            target=$(grep -m1 "$dir" "$path" | grep -oP "-> /[^ ]+")
-            last_sync=$(grep "Sync completed $dir" "$path" | tail -1 | cut -d']' -f1 | tr -d '[')
-            echo "$dir -> $target [Last Sync: $last_sync]"
+        declare -A last_state
+
+        # Περνάμε από το log και θυμόμαστε την τελευταία κατάσταση για κάθε dir
+        while IFS= read -r line; do
+            if [[ "$line" =~ Monitoring\ started\ for\ (.+) ]]; then
+                dir="${BASH_REMATCH[1]}"
+                last_state["$dir"]="started"
+            elif [[ "$line" =~ Monitoring\ stopped\ for\ (.+) ]]; then
+                dir="${BASH_REMATCH[1]}"
+                last_state["$dir"]="stopped"
+            fi
+        done < "$path"
+
+         for dir in "${!last_state[@]}"; do
+            if [ "${last_state[$dir]}" = "stopped" ]; then
+                sync_line=$(grep "Sync completed $dir" "$path" | tail -1)
+                last_sync=$(echo "$sync_line" | grep -oP '^\[\K[^]]+')
+                target=$(echo "$sync_line" | awk -F'->' '{print $2}' | cut -d' ' -f2)
+                echo "$dir -> $target [Last Sync: $last_sync]"
+            fi
         done
         ;;
 
