@@ -183,21 +183,21 @@ int main(int argc, char *argv[]) {
     
             if (FD_ISSET(fd, &fds)) {
                 char buffer[1024];
-                ssize_t len;
-    
-                //διάβασε ό,τι έχει γραφτεί από τον worker
-                while ((len = read(fd, buffer, sizeof(buffer) - 1)) > 0) {
-                    buffer[len] = '\0';
-                    write(log_fd, buffer, len);
+                ssize_t len = read(fd, buffer, sizeof(buffer) - 1);
+
+                if (len > 0) {
+                    buffer[len] = '\0'; 
+                    write(log_fd, buffer, len); 
+        
                 }
-                //αφαίρεσέ τον
-                remove_worker_by_pid(active_workers[i].pid);
-    
-                //μην αυξήσεις το i — μπορεί να έχει γίνει swap
-                continue;
+                close(fd);
+        
+                //μετακίνησε το τελευταίο στοιχείο εδώ για να διαγράψεις χωρίς να αφήσεις κενό
+                active_workers[i] = active_workers[active_worker_count - 1];
+                active_worker_count--;
+            } else {
+                i++; // μόνο αν δεν έγινε ανάγνωση, προχώρα στον επόμενο
             }
-    
-            i++;  //αν δεν έγινε read
         }
     
         //χειρισμός dead_pids από SIGCHLD ---
@@ -215,7 +215,7 @@ int main(int argc, char *argv[]) {
                         write(log_fd, buffer, len);
                     }
     
-                    remove_worker_by_pid(pid);
+                    remove_worker_by_pid(pid, log_fd);
                     break;
                 }
             }

@@ -18,9 +18,14 @@ int files_copied = 0, files_skipped = 0;
 int main(int argc, char *argv[]) {
 
     if (argc != 5) {
-        fprintf(stderr, "Usage: %s <source_directory> <target_directory> <filename|ALL> <operation>\n", argv[0]);
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "Usage: %s <source_directory> <target_directory> <filename|ALL> <operation>\n",
+                 argv[0]);
+        write(STDOUT_FILENO, msg, strlen(msg));  
         exit(EXIT_FAILURE);
     }
+    
 
     const char *src_dir = argv[1];
     const char *dst_dir = argv[2];
@@ -30,7 +35,7 @@ int main(int argc, char *argv[]) {
     switch (op) {
         case OP_FULL:
             if (strcmp(filename, "ALL") != 0) {
-                fprintf(stderr, "For FULL operation, filename must be ALL\n");
+                //fprintf(stderr, "For FULL operation, filename must be ALL\n");
                 exit(EXIT_FAILURE);
             }
             do_full_sync(src_dir, dst_dir, &files_copied, &files_skipped, error_buffer, &error_offset);
@@ -50,8 +55,11 @@ int main(int argc, char *argv[]) {
     }
 
     const char *status = (error_offset > 0) ? "PARTIAL" : "SUCCESS";
-    send_exec_report(status, files_copied, files_skipped, error_buffer);
-    fflush(stdout);             
-    fprintf(stderr, "[worker] Finished. Exiting now.\n");
+    char report_buffer[4096];
+    send_exec_report_to_buffer(report_buffer, sizeof(report_buffer), status, files_copied, files_skipped, error_buffer);
+
+    write(STDOUT_FILENO, report_buffer, strlen(report_buffer));
+    //fflush(stdout);            
+    //fprintf(stderr, "[worker] Finished. Exiting now.\n");
     exit(0);  
 }

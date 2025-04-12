@@ -68,6 +68,7 @@ void handle_inotify_events(int inotify_fd, int log_fd);
 int sync_on_change(const char *src, const char *dst, int log_fd);
 
 Operation parse_operation(const char *op_str);
+const char* operation_to_string(Operation op);
 void do_full_sync(const char *src, const char *dst, 
     int *files_copied, int *files_skipped, 
     char *error_buffer, size_t *error_offset);
@@ -83,11 +84,11 @@ void handle_deleted(const char *dst_dir, const char *filename,
           int *files_copied, int *files_skipped,
           char *error_buffer, size_t *error_offset);
 
-          void send_exec_report(const char *status, int copied, int skipped, const char *error_buffer);
+void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const char *status, int copied, int skipped, const char *error_buffer);
 
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
 
-int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors);
+int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd);
 
-void remove_worker_by_pid(pid_t pid);
+void remove_worker_by_pid(pid_t pid, int log_fd);
 #endif //UTILS_H

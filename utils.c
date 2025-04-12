@@ -198,7 +198,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
 
                     pid_t pid;
                     int err_count = 0;
-                    start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid, &err_count);
+                    start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid, &err_count, log_fd);
                     curr->running_worker_pid = pid;
                       
                     curr->last_sync_time = time(NULL);
@@ -306,7 +306,7 @@ int perform_initial_sync(const char *src, const char *dst, int log_fd) {
 
             pid_t pid;
             int err_count = 0;
-            int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count);
+            int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count, log_fd);
             if (result > 0) {
                 entry->is_syncing = 0;
                 entry->running_worker_pid = pid;
@@ -373,7 +373,7 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
             char timebuf[64];
             strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
             
-            if (start_worker(src, dst, "", OP_FULL, &pid, &err_count) > 0) {
+            if (start_worker(src, dst, "", OP_FULL, &pid, &err_count, log_fd) > 0) {
                 entry->is_syncing = 0;
                 entry->running_worker_pid = pid;
 
@@ -538,6 +538,17 @@ Operation parse_operation(const char *op_str) {
     exit(EXIT_FAILURE);
 }
 
+const char* operation_to_string(Operation op) {
+    switch (op) {
+        case OP_FULL: return "FULL";
+        case OP_ADDED: return "ADDED";
+        case OP_MODIFIED: return "MODIFIED";
+        case OP_DELETED: return "DELETED";
+        default: return "UNKNOWN";
+    }
+}
+
+
 void handle_added(const char *src, const char *dst, const char *filename, 
     int *files_copied, int *files_skipped,
     char *error_buffer, size_t *error_offset) {
@@ -672,24 +683,22 @@ void handle_deleted(const char *dst, const char *filename,
     }
 }
 
-void send_exec_report(const char *status, int copied, int skipped, const char *error_buffer) {
-    char line[256];
+void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const char *status, int copied, int skipped, const char *error_buffer) {
+    char temp[256];
+    snprintf(dest_buffer, buffer_size, "EXEC_REPORT_START\n");
 
-    write(STDOUT_FILENO, "EXEC_REPORT_START\n", strlen("EXEC_REPORT_START\n"));
+    snprintf(temp, sizeof(temp), "STATUS: %s\n", status);
+    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
 
-    write(STDOUT_FILENO, "STATUSok: ", strlen("STATUSok: "));
-    write(STDOUT_FILENO, status, strlen(status));
-    write(STDOUT_FILENO, "\n", 1);
-
-    snprintf(line, sizeof(line), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
-    write(STDOUT_FILENO, line, strlen(line));
+    snprintf(temp, sizeof(temp), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
+    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
 
     if (strlen(error_buffer) > 0) {
-        write(STDOUT_FILENO, "ERRORS:\n", strlen("ERRORS:\n"));
-        write(STDOUT_FILENO, error_buffer, strlen(error_buffer));
+        strncat(dest_buffer, "ERRORS:\n", buffer_size - strlen(dest_buffer) - 1);
+        strncat(dest_buffer, error_buffer, buffer_size - strlen(dest_buffer) - 1);
     }
 
-    write(STDOUT_FILENO, "EXEC_REPORT_END\n", strlen("EXEC_REPORT_END\n"));
+    strncat(dest_buffer, "EXEC_REPORT_END\n", buffer_size - strlen(dest_buffer) - 1);
 }
 
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset) {
@@ -702,7 +711,7 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
     }
 }
 
-int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors) {
+int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd) {
     if (active_worker_count >= MAX_WORKERS) {
         //ελέγχω μην ξεπεράσουν το όριο
         int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
@@ -733,10 +742,25 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
     }
 
     if ( *pid == 0) {
-        dup2(to_worker[0], STDIN_FILENO);
-        dup2(from_worker[1], STDOUT_FILENO);
         close(to_worker[1]);
         close(from_worker[0]);
+    
+        
+        if (dup2(to_worker[0], STDIN_FILENO) == -1) {
+            perror("dup2(STDIN) failed");
+            exit(1);
+        }
+        if (dup2(from_worker[1], STDOUT_FILENO) == -1) {
+            perror("dup2(STDOUT) failed");
+            exit(1);
+        }
+        if (dup2(from_worker[1], STDERR_FILENO) == -1) {
+            perror("dup2(STDERR) failed");
+            exit(1);
+        }
+        
+        close(to_worker[0]);
+        close(from_worker[1]);
 
         char op_str[16];
         switch (op) {
@@ -747,8 +771,8 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         }
 
 
-        fprintf(stderr, "[start_worker] Forked child (pid=%d), calling exec with args:\n", getpid());
-        fprintf(stderr, "  src = %s\n  dst = %s\n  filename = %s\n  op = %s\n", src, dst, filename, op_str);
+        //fprintf(stderr, "[start_worker] Forked child (pid=%d), calling exec with args:\n", getpid());
+        //fprintf(stderr, "  src = %s\n  dst = %s\n  filename = %s\n  op = %s\n", src, dst, filename, op_str);
 
         execl("./worker", "./worker", src, dst, filename, op_str, NULL);
         const char *error_msg = "EXEC_FAILED\n";
@@ -786,7 +810,7 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         }
         
         if (strstr(buffer, "EXEC_FAILED") != NULL) {
-            fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
+            //fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
             close(to_worker[1]);
             close(from_worker[0]);
             waitpid(*pid, NULL, 0);
@@ -796,12 +820,56 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         int local_errors = 0;
 
         if (found_end) {
-            fprintf(stderr, "[parent] Received full report from worker:\n%s\n", buffer);
+            //fprintf(stderr, "[parent] Received full report from worker:\n%s\n", buffer);
             char *err_line = strstr(buffer, "ERRORS:");
             if (err_line) {
                 sscanf(err_line, "ERRORS:%d", &local_errors);
         
             }
+            char *status = NULL, *details = NULL;
+            char *line = strtok(buffer, "\n");
+
+            while (line) {
+                if (strncmp(line, "STATUS:", 7) == 0) {
+                    status = line + 7;
+                } else if (strncmp(line, "DETAILS:", 7) == 0) {
+                    details = line + 8;
+                }
+                line = strtok(NULL, "\n");
+            }
+
+            if (status) while (*status == ' ') status++;
+            if (details) while (*details == ' ') details++;
+
+           // if (status && details) {
+                time_t now = time(NULL);
+                struct tm *timeinfo = localtime(&now);
+                char timebuf[64];
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+                char log_message[1024];
+                snprintf(log_message, sizeof(log_message),
+                "%s [%s] [%s] [%d] [%s] [%s] [%s]\n",
+                timebuf,
+                src,
+                dst,
+                *pid, 
+                operation_to_string(op),
+                status,
+                details);
+
+                write(log_fd, log_message, strlen(log_message));
+            /*} else {
+                char timebuf[64];
+                time_t now = time(NULL);
+                struct tm *timeinfo = localtime(&now);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+        
+                char error_message[256];
+                snprintf(error_message, sizeof(error_message),
+                        "%s Incomplete worker report for file %s\n", timebuf, filename);
+        
+                write(log_fd, error_message, strlen(error_message));
+            }*/
         }
 
         if (errors) *errors = local_errors;
@@ -824,7 +892,7 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
     }
 }
 
-void remove_worker_by_pid(pid_t pid) {
+void remove_worker_by_pid(pid_t pid, int log_fd) {
     for (int i = 0; i < active_worker_count; i++) {
         if (active_workers[i].pid == pid) {
             close(active_workers[i].pipe_read);
@@ -836,7 +904,7 @@ void remove_worker_by_pid(pid_t pid) {
                 WorkerTask *t = &task_queue[queue_start];
                 pid_t new_pid;
                 int err_count = 0;
-                start_worker(t->src, t->dst, t->filename, t->op, &new_pid, &err_count);
+                start_worker(t->src, t->dst, t->filename, t->op, &new_pid, &err_count, log_fd);
                 queue_start = (queue_start + 1) % MAX_TASK_QUEUE;
             }
             break;
