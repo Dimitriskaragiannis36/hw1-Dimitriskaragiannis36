@@ -65,7 +65,8 @@ int perform_initial_sync(const char *src, const char *dst, int log_fd);
 int add_watch_entry(int inotify_fd, const char *source, const char *target, int log_fd, int fd_out);
 void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pipe_out_fd);
 void handle_inotify_events(int inotify_fd, int log_fd);
-int sync_on_change(const char *src, const char *dst, int log_fd);
+int sync_on_change(const char *src, const char *dst, const char *filename, Operation op, int log_fd);
+
 
 Operation parse_operation(const char *op_str);
 const char* operation_to_string(Operation op);
@@ -91,4 +92,6 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset);
 int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd);
 
 void remove_worker_by_pid(pid_t pid, int log_fd);
+
+void remove_from_pending_queue(const char *src_dir);
 #endif //UTILS_H

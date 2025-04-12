@@ -351,7 +351,7 @@ sync_info_mem_store* find_entry_by_source_dir(const char *src) {
     return NULL;
 }
 
-int sync_on_change(const char *src, const char *dst, int log_fd) {
+int sync_on_change(const char *src, const char *dst, const char *filename, Operation op, int log_fd){
     char msg[512];
     time_t now = time(NULL);
     char timebuf[64];
@@ -363,35 +363,21 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
             if (entry->is_syncing) {
                 snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
                 write(log_fd, msg, strlen(msg));
-                printf("%s", msg);
+                write(STDOUT_FILENO, msg, strlen(msg));
                 return 0; //δεν ξεκινά νέο worker
             }
 
             pid_t pid;
             int err_count = 0;
-            time_t now = time(NULL);
-            char timebuf[64];
-            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-            
-            if (start_worker(src, dst, "", OP_FULL, &pid, &err_count, log_fd) > 0) {
+            int result = start_worker(src, dst, filename, op, &pid, &err_count, log_fd);
+            if (result > 0) {
                 entry->is_syncing = 0;
                 entry->running_worker_pid = pid;
-
-                snprintf(msg, sizeof(msg), "%s Syncing directoryOK3: %s -> %s\n", timebuf, src, dst);
-                write(log_fd, msg, strlen(msg));
-                write(STDOUT_FILENO, msg, strlen(msg));
-
-                now = time(NULL);
-                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-
-                snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
-                write(log_fd, msg, strlen(msg));
-                write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             } else {
                 snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
-                fprintf(stderr, "%s", msg);
+                write(STDERR_FILENO, msg, strlen(msg));
                 return -1;
             }
         }
@@ -401,7 +387,7 @@ int sync_on_change(const char *src, const char *dst, int log_fd) {
     //αν δεν βρέθηκε το entry:
     snprintf(msg, sizeof(msg), "%s No sync entry found for %s -> %s\n", timebuf, src, dst);
     write(log_fd, msg, strlen(msg));
-    fprintf(stderr, "%s", msg);
+    write(STDERR_FILENO, msg, strlen(msg));
     return -1;
 }
 
@@ -415,8 +401,17 @@ void handle_inotify_events(int inotify_fd, int log_fd) {
         struct inotify_event *event = (struct inotify_event *)&buffer[i];
         if (event->mask & (IN_CREATE | IN_MODIFY | IN_DELETE)) {
             sync_info_mem_store *entry = find_entry_by_watch(event->wd);
-            if (entry) {
-                sync_on_change(entry->source_dir, entry->target_dir, log_fd);
+            if (entry && event->len > 0) {
+                Operation op;
+                if (event->mask & IN_CREATE) {
+                    op = OP_ADDED;
+                } else if (event->mask & IN_MODIFY) {
+                    op = OP_MODIFIED;
+                } else if (event->mask & IN_DELETE) {
+                    op = OP_DELETED;
+                }
+        
+                sync_on_change(entry->source_dir, entry->target_dir, event->name, op, log_fd);
             }
         }
         i += sizeof(struct inotify_event) + event->len;
@@ -518,6 +513,7 @@ void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pip
 
             snprintf(log_entry, sizeof(log_entry), "%s Monitoring stopped for %s\n", timebuf, src_dir);
             write(log_fd, log_entry, strlen(log_entry));
+            //remove_from_pending_queue(src_dir);
             return;
         }
         curr = curr->next;
@@ -547,7 +543,6 @@ const char* operation_to_string(Operation op) {
         default: return "UNKNOWN";
     }
 }
-
 
 void handle_added(const char *src, const char *dst, const char *filename, 
     int *files_copied, int *files_skipped,
@@ -911,3 +906,27 @@ void remove_worker_by_pid(pid_t pid, int log_fd) {
         }
     }
 }
+
+/*void remove_from_pending_queue(const char *src_dir) {
+    int i, found = 0;
+    for (i = queue_start; i != queue_end; i = (i + 1) % MAX_TASK_QUEUE) {
+        if (strcmp(task_queue[i].src, src_dir) == 0) {
+            //εάν βρεθεί το task, μετακινήστε όλα τα υπόλοιπα κατά ένα
+            for (int j = i; j != queue_end; j = (j + 1) % MAX_TASK_QUEUE) {
+                int next = (j + 1) % MAX_TASK_QUEUE;
+                task_queue[j] = task_queue[next];
+            }
+            //ενημέρωσε το queue_end για να δείχνει το τελευταίο στοιχείο της ουράς
+            queue_end = (queue_end - 1 + MAX_TASK_QUEUE) % MAX_TASK_QUEUE;
+            found = 1;
+            break;
+        }
+    }
+
+    if (found) {
+        printf("Removed task with src_dir: %s\n", src_dir);
+    } else {
+        printf("No task found with src_dir: %s\n", src_dir);
+    }
+}*/
+
