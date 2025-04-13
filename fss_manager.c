@@ -11,12 +11,11 @@
 #include <signal.h>
 #include "utils.h" 
 
-#define DEFAULT_WORKER_LIMIT 5
+
 #define PIPE_IN "fss_in"  
 #define PIPE_OUT "fss_out"
 #define MAX_CMD_LEN 256
-#define MAX_ACTIVE_WORKERS 10  
-
+#define DEFAULT_WORKER_LIMIT 5
 
 extern ActiveWorker active_workers[];
 extern int active_worker_count; 
@@ -42,7 +41,6 @@ void sigchld_handler(int signo) {
 int main(int argc, char *argv[]) {
     char *manager_logfile = NULL;
     char *config_file = NULL;
-    int worker_limit = DEFAULT_WORKER_LIMIT; //μπορεί να μην δώσει το -n
 
     int opt;
     while ((opt = getopt(argc, argv, "l:c:n::")) != -1) {

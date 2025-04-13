@@ -7,7 +7,7 @@
 #define PIPE_IN "fss_in"
 #define PIPE_OUT "fss_out"
 #define EVENT_BUF_LEN (1024 * (sizeof(struct inotify_event) + 16))
-#define MAX_WORKERS 10
+#define MAX_WORKERS 50
 #define MAX_TASK_QUEUE 100
 
 typedef struct sync_info_mem_store {
@@ -47,6 +47,7 @@ typedef struct {
     Operation op;
 } WorkerTask;
 
+extern int worker_limit;
 extern sync_info_mem_store *sync_list_head;
 extern int log_fd;
 extern int global_inotify_fd;

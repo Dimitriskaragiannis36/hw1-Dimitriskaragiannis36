@@ -13,6 +13,7 @@
 #include "utils.h"
 
 #define BUF_SIZE 1024
+#define DEFAULT_WORKER_LIMIT 5
 
 sync_info_mem_store *sync_list_head = NULL;
 int log_fd = -1;
@@ -24,7 +25,7 @@ int active_worker_count = 0;
 WorkerTask task_queue[MAX_TASK_QUEUE];
 int queue_start = 0, queue_end = 0;
 
-
+int worker_limit = DEFAULT_WORKER_LIMIT;
 
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out) {
     int fd = open(config_path, O_RDONLY);
@@ -513,7 +514,7 @@ void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pip
 
             snprintf(log_entry, sizeof(log_entry), "%s Monitoring stopped for %s\n", timebuf, src_dir);
             write(log_fd, log_entry, strlen(log_entry));
-            //remove_from_pending_queue(src_dir);
+            remove_from_pending_queue(src_dir);
             return;
         }
         curr = curr->next;
@@ -707,7 +708,7 @@ void log_error(const char *path, const char *msg, char *buffer, size_t *offset) 
 }
 
 int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd) {
-    if (active_worker_count >= MAX_WORKERS) {
+    if (active_worker_count >= worker_limit) {
         //ελέγχω μην ξεπεράσουν το όριο
         int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
         if (next_end == queue_start) {
@@ -907,26 +908,33 @@ void remove_worker_by_pid(pid_t pid, int log_fd) {
     }
 }
 
-/*void remove_from_pending_queue(const char *src_dir) {
-    int i, found = 0;
-    for (i = queue_start; i != queue_end; i = (i + 1) % MAX_TASK_QUEUE) {
-        if (strcmp(task_queue[i].src, src_dir) == 0) {
-            //εάν βρεθεί το task, μετακινήστε όλα τα υπόλοιπα κατά ένα
-            for (int j = i; j != queue_end; j = (j + 1) % MAX_TASK_QUEUE) {
-                int next = (j + 1) % MAX_TASK_QUEUE;
-                task_queue[j] = task_queue[next];
-            }
-            //ενημέρωσε το queue_end για να δείχνει το τελευταίο στοιχείο της ουράς
-            queue_end = (queue_end - 1 + MAX_TASK_QUEUE) % MAX_TASK_QUEUE;
-            found = 1;
-            break;
+void remove_from_pending_queue(const char *src_dir) {
+    int count = (queue_end - queue_start + MAX_TASK_QUEUE) % MAX_TASK_QUEUE;
+    int removed = 0;
+
+    int new_end = queue_start;
+
+    for (int i = 0; i < count; i++) {
+        int index = (queue_start + i) % MAX_TASK_QUEUE;
+
+        if (!removed && strcmp(task_queue[index].src, src_dir) == 0) {
+            // Skip this task (i.e., remove it)
+            removed = 1;
+            continue;
         }
+
+        task_queue[new_end] = task_queue[index];
+        new_end = (new_end + 1) % MAX_TASK_QUEUE;
     }
 
-    if (found) {
-        printf("Removed task with src_dir: %s\n", src_dir);
+    queue_end = new_end;
+
+    if (removed) {
+        printf("Removed one pending task for %s\n", src_dir);
     } else {
-        printf("No task found with src_dir: %s\n", src_dir);
+        printf("No pending task for %s\n", src_dir);
     }
-}*/
+}
+
+
 
