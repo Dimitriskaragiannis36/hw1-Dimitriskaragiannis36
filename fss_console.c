@@ -6,6 +6,7 @@
 #include <errno.h>        //για χρήση errno
 #include <sys/select.h>  //για χρήση select
 #include <sys/time.h>   //για timestamp
+#include <fcntl.h>      //για τις σημαίες
 #include "utils.h"    //βιβλιοθήκη με όλες τις απαραίτητες συναρτήσεις
 
 #define PIPE_IN "fss_in"
@@ -76,7 +77,7 @@ int main(int argc, char *argv[]) {
 
     char command[MAX_CMD_LEN];
     while (1) {
-        print_prompt();
+        print_prompt(); //καλεί την συνάρτηση τερματικού
         if (!fgets(command, MAX_CMD_LEN, stdin)) {
             break;
         }
