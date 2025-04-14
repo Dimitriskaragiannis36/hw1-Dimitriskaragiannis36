@@ -29,8 +29,8 @@ int worker_limit = DEFAULT_WORKER_LIMIT;   //εδώ παίρνει την defaul
 //--------------------------FSS_MANAGER--------------------------------------------
 //συνάρτηση καθαρισμού pipes και logfile
 void cleanup_previous_state(const char *logfile) {
-    //καθαρίζω τα named pipes
-
+    
+    //καθαρίζω τα named pipes (ENOENT= υπάρχει ήδη)
     if (unlink(PIPE_IN) == -1 && errno != ENOENT) {
         perror("Error unlinking PIPE_IN");
     }
@@ -38,8 +38,7 @@ void cleanup_previous_state(const char *logfile) {
         perror("Error unlinking PIPE_OUT");
     }
     
-
-    //καθαρίζω αρχείο - το κάνω κενό με truncate
+    //καθαρίζω αρχείο - το κάνω κενό με truncate με δικαιώματα rw -r -r
     int fd = open(logfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         perror("logfile cleanup");
@@ -50,6 +49,7 @@ void cleanup_previous_state(const char *logfile) {
 
 //συνάρτηση φόρτωσης ζευγών από το config_file
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out) {
+    //άνοιγμα αρχείου μόνο για διάβασμα
     int fd = open(config_path, O_RDONLY);
     if (fd == -1) {
         perror("open config_file");
@@ -57,26 +57,27 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
     }
 
     char buffer[BUF_SIZE];
-    ssize_t bytes_read;
+    ssize_t bytes_read;   //αφού διαβάζουμε bytes
     char line[1024];
     int line_pos = 0;
 
     while ((bytes_read = read(fd, buffer, sizeof(buffer))) > 0) {
         for (ssize_t i = 0; i < bytes_read; ++i) {
-            if (buffer[i] == '\n') {
-                line[line_pos] = '\0';
+            if (buffer[i] == '\n') {  //αν βρω \n βάζω στην γραμμή το κείμενο 
+                line[line_pos] = '\0';  //και μετά null terminator
                 line_pos = 0;
 
                 char src[256], tgt[256];
                 if (sscanf(line, "%255s %255s", src, tgt) == 2) {
+                    //κλήση συνάρτησης για παρακολούθηση καταλόγου
                    add_watch_entry(inotify_fd, src, tgt, log_fd, fd_out);
                 }
             } else if (line_pos < (int)sizeof(line) - 1) {
-                line[line_pos++] = buffer[i];
-            }
-        }
+                line[line_pos++] = buffer[i]; //αν δεν έχει φτάσει στο \n
+            }                           //και δεν έχει ξεπεράσει το 1024
+        }                               //βάζει τον χαρακτήρα μέσα
     }
-
+    //σε περίπτωση λάθους
     if (bytes_read == -1) {
         perror("read config_file");
         close(fd);
@@ -91,51 +92,47 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
  {
     char response[1024]; 
     char log_entry[1024];
-    time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    time_t now = time(NULL); //για να πάρω τον χρόνο τώρα
+    struct tm *tm_info = localtime(&now); //την μετατρέπει σε δομή ημερομηνίας/ώρας τοπικής ζώνης
     char timebuf[64];
-    char last_sync_buf[64];
+    char last_sync_buf[64];  //formation της ώρας όπως ζητήθηκε 
     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", tm_info);
 
-    if (strncmp(cmd, "add ", 4) == 0) {
-        char src[256], tgt[256];
+    if (strncmp(cmd, "add ", 4) == 0) {  //συγκρίνει τα 4 πρώτα chr
+        char src[256], tgt[256]; //εκεί που είναι το cmd + 4
         if (sscanf(cmd + 4, "%255s %255s", src, tgt) == 2) {
             int result = add_watch_entry(inotify_fd, src, tgt, log_fd, pipe_out_fd);
-            /*if (result == 0) {
-                snprintf(response, sizeof(response), "%s Added watch: %s -> %s\n", timebuf, src, tgt);
-            } else {
-                snprintf(response, sizeof(response), "%s Failed to add watch: %s -> %s\n", timebuf, src, tgt);
-            }
-            write(pipe_out_fd, response, strlen(response));*/
+            //κλήση συνάρτησης για παρακολούθηση καταλόγου
             return result;
             
-        }//άκυρο
-    }
-    else if (strncmp(cmd, "cancel ", 7) == 0) {
+        }
+    }           //η επόμενη εντολή στο fss_console
+    else if (strncmp(cmd, "cancel ", 7) == 0) { //συγκρίνει τα πρώτα 7
         char src[256];
-        if (sscanf(cmd + 7, "%255s", src) == 1) {
+        if (sscanf(cmd + 7, "%255s", src) == 1) { //από το cmd 7 δεξιά
             remove_watch_entry(src, inotify_fd, log_fd, pipe_out_fd);
-            /*snprintf(log_entry, sizeof(log_entry), "%s Canceled monitoring for %s\n", timebuf, src);
-            write(log_fd, log_entry, strlen(log_entry)); */           
+            //κλήση συνάρτησης για ακύρωση παρακολούθησης καταλόγου
         } else {
+            //γράψε λάθος
             snprintf(response, sizeof(response), "%s Invalid cancel command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
         }   
-    }
-    else if (strncmp(cmd, "status ", 7) == 0) {
+    }       //η εντολή status
+    else if (strncmp(cmd, "status ", 7) == 0) {   //συγκρίνει πάλι τα πρώτα 7
         char src[256];
-        if (sscanf(cmd + 7, "%255s", src) != 1) {
+        if (sscanf(cmd + 7, "%255s", src) != 1) {   //από το cmd 7 δεξιά
+            //μήνυμα λάθους
             snprintf(response, sizeof(response), "%s Invalid sync command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
             return 0;
         }
-        sync_info_mem_store *curr = sync_list_head;
+        sync_info_mem_store *curr = sync_list_head; //η κεφαλή που αρχικοποιήσαμε πριν
         int found = 0;
-        while (curr) {
+        while (curr) {   //η δομή που είχαμε πριν
             if (strcmp(curr->source_dir, src) == 0) {
-                found = 1;
+                found = 1;   //το formation της εκφώνησης
                 strftime(last_sync_buf, sizeof(last_sync_buf), "%Y-%m-%d %H:%M:%S", localtime(&curr->last_sync_time));
-                snprintf(response, sizeof(response),
+                snprintf(response, sizeof(response),  //αυτό που ζητείται να εκτυπωθεί
                          "%s Status requested for %s\n"
                          "Directory: %s\n"
                          "Target: %s\n"
@@ -151,48 +148,51 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                 write(pipe_out_fd, response, strlen(response));
                 break;
             }
-            curr = curr->next;
+            curr = curr->next;  //μετάβαση στο επόμενο της λίστας
         }
+        //σε περίπτωση λάθους
         if (!found) {
             snprintf(response, sizeof(response),
                      "%s Directory not monitored: %s\n", timebuf, src);
             write(pipe_out_fd, response, strlen(response));
         }
-    }
+    }       //η εντολή sync στον console
     else if (strncmp(cmd, "sync ", 5) == 0) {
         char src[256];
-        if (sscanf(cmd + 5, "%255s", src) != 1) {
+        if (sscanf(cmd + 5, "%255s", src) != 1) {  //εκεί που βρίσκεται το cmd + 5
+            //μήνυμα λάθους
             snprintf(response, sizeof(response), "%s Invalid sync command format\n", timebuf);
             write(pipe_out_fd, response, strlen(response));
             return 0;
         }        
-        sync_info_mem_store *curr = sync_list_head;
+        sync_info_mem_store *curr = sync_list_head; //πάλι η κορυφή της λίστας
         int found = 0;
-        while (curr) {
+        while (curr) { //η δομή λίστας
             if (strcmp(curr->source_dir, src) == 0) {
                 found = 1;
-                if (curr->is_syncing) {
-                    snprintf(response, sizeof(response),
+                if (curr->is_syncing) { //το συγκεκριμένο στοιχείο
+                    snprintf(response, sizeof(response), //αν όντως έχουμε κάπου sync
                              "%s Sync already in progress %s\n", timebuf, src);
                     write(pipe_out_fd, response, strlen(response));
                 } else {
+                    //αλλιώς το δηλώνω πως συγρονίζεται
                     curr->is_syncing = 1;
             
-                    char combined_response[2048];
-                    now = time(NULL);
+                    char combined_response[2048]; //για να τα εμφανίσει όλα μαζι
+                    now = time(NULL); //η τρεχουσα ώρα και το formation που ζητάμε
                     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
                     snprintf(combined_response, sizeof(combined_response),
                             "%s Syncing directory: %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
-
+                        //πλέον συγχρονίζεται και θα καλέσω την συνάρτηση για αυτό
                     pid_t pid;
-                    int err_count = 0;
+                    int err_count = 0;  //συνάρτηση που θα κάνει το fork και το exec 
                     start_worker(curr->source_dir, curr->target_dir, "ALL", OP_FULL, &pid, &err_count, log_fd);
-                    curr->running_worker_pid = pid;
-                      
-                    curr->last_sync_time = time(NULL);
-                    curr->is_syncing = 0;
+                    curr->running_worker_pid = pid;  //θα επιστρέψει το pid 
+                                                    //με call by reference
+                    curr->last_sync_time = time(NULL); //ενημερώνουμε την ώρα συγχρονισμού
+                    curr->is_syncing = 0; //τέλος συγχρονισμού
 
-                    now = time(NULL);
+                    now = time(NULL); //νέα ώρα και formation
                     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
                     snprintf(combined_response + strlen(combined_response), sizeof(combined_response) - strlen(combined_response),
                             "%s Sync completed %s -> %s Errors:%d\n", timebuf, curr->source_dir, curr->target_dir, err_count);
@@ -208,31 +208,19 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                     snprintf(log_entry, sizeof(log_entry),
                             "%s Sync completed %s -> %s Errors:%d\n", timebuf, curr->source_dir, curr->target_dir, err_count);
                     write(log_fd, log_entry, strlen(log_entry));
-        
-                    /*snprintf(response, sizeof(response),
-                             "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
-                    snprintf(response, sizeof(response),
-                             "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);
-                    write(pipe_out_fd, response, strlen(response));
-                    snprintf(log_entry, sizeof(log_entry),
-                             "%s Sync completed %s -> %s Errors:%d\n",
-                             timebuf, curr->source_dir, curr->target_dir, curr->error_count);
-                    snprintf(log_entry, sizeof(log_entry),
-                             "%s Sync started %s -> %s\n", timebuf, curr->source_dir, curr->target_dir);                    
-                    write(log_fd, log_entry, strlen(log_entry));*/
                 }
                 break;
             }
-            curr = curr->next;
+            curr = curr->next; //επόμενο στην λίστα
         }
+        //αν δεν βρεθεί, μήνυμα λάθους
         if (!found) {
             snprintf(response, sizeof(response),
                      "%s Directory not monitored: %s\n", timebuf, src);
             write(pipe_out_fd, response, strlen(response));
         }
-    }
-    else if (strncmp(cmd, "shutdown", 8) == 0) {
+    }       //τελευταία εντολή 
+    else if (strncmp(cmd, "shutdown", 8) == 0) { //συγκρίνει τα 8 πρώτα
         //στέλνει μόνο στην οθόνη (fss_out)
         snprintf(response, sizeof(response),
                  "%s Shutting down manager...\n"
@@ -240,7 +228,8 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
                  "%s Processing remaining queued tasks.\n",
                  timebuf, timebuf, timebuf);
         write(pipe_out_fd, response, strlen(response));
-    
+        
+        //σε περίπτωση που έχουμε πάρα πολλούς workers σε εκκρεμότητα
         while (active_worker_count > 0) {
             snprintf(response, sizeof(response),
                      "%s Waiting for active workers to finish...\n", timebuf);
@@ -248,15 +237,16 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
             sleep(1); //περιμένουμε λίγο πριν ελέγξουμε ξανά
         } 
 
-        now = time(NULL);
+        now = time(NULL); //χρόνος και formation για την σωστή χρονοσφραγίδα
         strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
         snprintf(response, sizeof(response),
                  "%s Manager shutdown complete.\n", timebuf);
         write(pipe_out_fd, response, strlen(response));
 
-        return 1;
-    }
+        return 1; //1 γιατί αν είναι true θα κλείνει τα pipes στον manager
+    }               //και δεν θα κρεμάνε ως .nfs
     else {
+        //σε περίτπωση λάθους
         snprintf(response, sizeof(response), "%s Unknown command: %s\n", timebuf, cmd);
         write(pipe_out_fd, response, strlen(response));
     }
