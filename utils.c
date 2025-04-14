@@ -1,32 +1,54 @@
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <time.h>
 #include <stdio.h>
-#include <errno.h>
-#include <dirent.h>
-#include <sys/inotify.h>
-#include "utils.h"
+#include <stdlib.h>             //για exit
+#include <string.h>             //για χρήση strncmp
+#include <unistd.h>             //για low I/0
+#include <fcntl.h>           //για σημαίες O_CREAT κτλ
+#include <sys/types.h>      //για pid_t, ssize_t
+#include <sys/wait.h>       //για waitpid
+#include <time.h>         //για time_t
+#include <errno.h>        //για χρήση errno
+#include <dirent.h>       //για opendir, readdir, struct dirent      
+#include <sys/inotify.h>  //για struct inotify_event
+#include "utils.h"      //βιβλιοθήκη με όλες τις απαραίτητες συναρτήσεις
 
 #define BUF_SIZE 1024
 #define DEFAULT_WORKER_LIMIT 5
 
-sync_info_mem_store *sync_list_head = NULL;
-int log_fd = -1;
-int global_inotify_fd = -1;
+sync_info_mem_store *sync_list_head = NULL;  //αρχικοποίηση της δομής που βρίσκεται στο utils.h 
 
-ActiveWorker active_workers[MAX_WORKERS];
+ActiveWorker active_workers[MAX_WORKERS]; //αρχικοποίηση πίνακα δομής του utils.h
 int active_worker_count = 0;
 
-WorkerTask task_queue[MAX_TASK_QUEUE];
+WorkerTask task_queue[MAX_TASK_QUEUE];  //αρχικοποίηση πίνακα δομής του utils.h
 int queue_start = 0, queue_end = 0;
 
-int worker_limit = DEFAULT_WORKER_LIMIT;
+int worker_limit = DEFAULT_WORKER_LIMIT;   //εδώ παίρνει την default (5) τιμή
 
+
+
+//--------------------------FSS_MANAGER--------------------------------------------
+//συνάρτηση καθαρισμού pipes και logfile
+void cleanup_previous_state(const char *logfile) {
+    //καθαρίζω τα named pipes
+
+    if (unlink(PIPE_IN) == -1 && errno != ENOENT) {
+        perror("Error unlinking PIPE_IN");
+    }
+    if (unlink(PIPE_OUT) == -1 && errno != ENOENT) {
+        perror("Error unlinking PIPE_OUT");
+    }
+    
+
+    //καθαρίζω αρχείο - το κάνω κενό με truncate
+    int fd = open(logfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        perror("logfile cleanup");
+        exit(EXIT_FAILURE);
+    }
+    close(fd);
+}
+
+//συνάρτηση φόρτωσης ζευγών από το config_file
 void load_config_file(const char *config_path, int inotify_fd, int log_fd, int fd_out) {
     int fd = open(config_path, O_RDONLY);
     if (fd == -1) {
@@ -64,26 +86,7 @@ void load_config_file(const char *config_path, int inotify_fd, int log_fd, int f
     close(fd);
 }
 
-void cleanup_previous_state(const char *logfile) {
-    //καθαρίζω τα named pipes
-
-    if (unlink(PIPE_IN) == -1 && errno != ENOENT) {
-        perror("Error unlinking PIPE_IN");
-    }
-    if (unlink(PIPE_OUT) == -1 && errno != ENOENT) {
-        perror("Error unlinking PIPE_OUT");
-    }
-    
-
-    //καθαρίζω αρχείο - το κάνω κενό με truncate
-    int fd = open(logfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) {
-        perror("logfile cleanup");
-        exit(EXIT_FAILURE);
-    }
-    close(fd);
-}
-
+//συνάρτηση χειρισμού command μεταξύ manager με console
 int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd, int inotify_fd)
  {
     char response[1024]; 
@@ -260,149 +263,7 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
     return 0;  
 }
 
-void get_timestamp(char *buffer, size_t size) {
-    time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
-    strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
-}
-
-int perform_initial_sync(const char *src, const char *dst, int log_fd) {
-    char msg[512];
-    time_t now = time(NULL);
-    char timebuf[64];
-
-    sync_info_mem_store *entry = sync_list_head;
-    while (entry) {
-        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
-            if (entry->is_syncing) {
-                now = time(NULL);
-                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
-                write(log_fd, msg, strlen(msg));
-                write(STDOUT_FILENO, msg, strlen(msg));
-                return 0;
-            }
-
-            now = time(NULL);
-            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-            snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
-            write(log_fd, msg, strlen(msg));
-            write(STDOUT_FILENO, msg, strlen(msg));
-
-            pid_t pid;
-            int err_count = 0;
-            int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count, log_fd);
-            if (result > 0) {
-                entry->is_syncing = 0;
-                entry->running_worker_pid = pid;
-                now = time(NULL);
-                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-                snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
-                write(log_fd, msg, strlen(msg));
-                write(STDOUT_FILENO, msg, strlen(msg));
-                return 0;
-            } else {
-                snprintf(msg, sizeof(msg), "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
-                write(log_fd, msg, strlen(msg));
-                write(STDERR_FILENO, msg, strlen(msg));
-                return -1;
-            }
-        }
-        entry = entry->next;
-    }
-
-    //δεν βρέθηκε το entry
-    snprintf(msg, sizeof(msg), "%s No sync entry for %s -> %s\n", timebuf, src, dst);
-    write(log_fd, msg, strlen(msg));
-    write(STDERR_FILENO, msg, strlen(msg));
-    return -1;
-}
-
-sync_info_mem_store* find_entry_by_watch(int wd) {
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
-        if (curr->watch_descriptor == wd) return curr;
-        curr = curr->next;
-    }
-    return NULL;
-}
-
-sync_info_mem_store* find_entry_by_source_dir(const char *src) {
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
-        if (strcmp(curr->source_dir, src) == 0) return curr;
-        curr = curr->next;
-    }
-    return NULL;
-}
-
-int sync_on_change(const char *src, const char *dst, const char *filename, Operation op, int log_fd){
-    char msg[512];
-    time_t now = time(NULL);
-    char timebuf[64];
-    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
-
-    sync_info_mem_store *entry = sync_list_head;
-    while (entry) {
-        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
-            if (entry->is_syncing) {
-                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
-                write(log_fd, msg, strlen(msg));
-                write(STDOUT_FILENO, msg, strlen(msg));
-                return 0; //δεν ξεκινά νέο worker
-            }
-
-            pid_t pid;
-            int err_count = 0;
-            int result = start_worker(src, dst, filename, op, &pid, &err_count, log_fd);
-            if (result > 0) {
-                entry->is_syncing = 0;
-                entry->running_worker_pid = pid;
-                return 0;
-            } else {
-                snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
-                write(log_fd, msg, strlen(msg));
-                write(STDERR_FILENO, msg, strlen(msg));
-                return -1;
-            }
-        }
-        entry = entry->next;
-    }
-
-    //αν δεν βρέθηκε το entry:
-    snprintf(msg, sizeof(msg), "%s No sync entry found for %s -> %s\n", timebuf, src, dst);
-    write(log_fd, msg, strlen(msg));
-    write(STDERR_FILENO, msg, strlen(msg));
-    return -1;
-}
-
-void handle_inotify_events(int inotify_fd, int log_fd) {
-    char buffer[EVENT_BUF_LEN];
-    int length = read(inotify_fd, buffer, EVENT_BUF_LEN);
-    if (length < 0) return;
-
-    int i = 0;
-    while (i < length) {
-        struct inotify_event *event = (struct inotify_event *)&buffer[i];
-        if (event->mask & (IN_CREATE | IN_MODIFY | IN_DELETE)) {
-            sync_info_mem_store *entry = find_entry_by_watch(event->wd);
-            if (entry && event->len > 0) {
-                Operation op;
-                if (event->mask & IN_CREATE) {
-                    op = OP_ADDED;
-                } else if (event->mask & IN_MODIFY) {
-                    op = OP_MODIFIED;
-                } else if (event->mask & IN_DELETE) {
-                    op = OP_DELETED;
-                }
-        
-                sync_on_change(entry->source_dir, entry->target_dir, event->name, op, log_fd);
-            }
-        }
-        i += sizeof(struct inotify_event) + event->len;
-    }
-}
-
+//συνάρτηση παρακολούθησης καταλόγου με inotify
 int add_watch_entry(int inotify_fd, const char *source, const char *target, int log_fd, int fd_out) {
     sync_info_mem_store *curr = sync_list_head;
     while (curr) {
@@ -475,6 +336,60 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     return 0;
 }
 
+//συνάρτηση αρχικού συγχρονισμού (από τα ζεύγη του config_file)
+int perform_initial_sync(const char *src, const char *dst, int log_fd) {
+    char msg[512];
+    time_t now = time(NULL);
+    char timebuf[64];
+
+    sync_info_mem_store *entry = sync_list_head;
+    while (entry) {
+        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
+            if (entry->is_syncing) {
+                now = time(NULL);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
+                return 0;
+            }
+
+            now = time(NULL);
+            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+            snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
+            write(log_fd, msg, strlen(msg));
+            write(STDOUT_FILENO, msg, strlen(msg));
+
+            pid_t pid;
+            int err_count = 0;
+            int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count, log_fd);
+            if (result > 0) {
+                entry->is_syncing = 0;
+                entry->running_worker_pid = pid;
+                now = time(NULL);
+                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+                snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
+                return 0;
+            } else {
+                snprintf(msg, sizeof(msg), "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                write(STDERR_FILENO, msg, strlen(msg));
+                return -1;
+            }
+        }
+        entry = entry->next;
+    }
+
+    //δεν βρέθηκε το entry
+    snprintf(msg, sizeof(msg), "%s No sync entry for %s -> %s\n", timebuf, src, dst);
+    write(log_fd, msg, strlen(msg));
+    write(STDERR_FILENO, msg, strlen(msg));
+    return -1;
+}
+
+//συνάρτηση διακοπής παρακολούθησης καταλόγου με inotify
 void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pipe_out_fd) {
     char timebuf[64], response[512], log_entry[512];
     time_t now = time(NULL);
@@ -509,188 +424,96 @@ void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pip
     write(pipe_out_fd, response, strlen(response));
 }
 
-Operation parse_operation(const char *op_str) {
-    if (strcmp(op_str, "FULL") == 0) return OP_FULL;
-    if (strcmp(op_str, "ADDED") == 0) return OP_ADDED;
-    if (strcmp(op_str, "MODIFIED") == 0) return OP_MODIFIED;
-    if (strcmp(op_str, "DELETED") == 0) return OP_DELETED;
-
-    fprintf(stderr, "Invalid operation: %s\n", op_str);
-    exit(EXIT_FAILURE);
+//βοηθητική συνάρτηση αναζήτησης στην βάση δεδομένων με κριτήριο το watch descriptor
+sync_info_mem_store* find_entry_by_watch(int wd) {
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (curr->watch_descriptor == wd) return curr;
+        curr = curr->next;
+    }
+    return NULL;
 }
 
-const char* operation_to_string(Operation op) {
-    switch (op) {
-        case OP_FULL: return "FULL";
-        case OP_ADDED: return "ADDED";
-        case OP_MODIFIED: return "MODIFIED";
-        case OP_DELETED: return "DELETED";
-        default: return "UNKNOWN";
-    }
-}
+//συνάρτηση διαχείρισης αλλαγών μέσω inotify
+void handle_inotify_events(int inotify_fd, int log_fd) {
+    char buffer[EVENT_BUF_LEN];
+    int length = read(inotify_fd, buffer, EVENT_BUF_LEN);
+    if (length < 0) return;
 
-void handle_added(const char *src, const char *dst, const char *filename, 
-    int *files_copied, int *files_skipped,
-    char *error_buffer, size_t *error_offset) {
-
-    char src_path[512], dst_path[512];
-    snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
-    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
-
-    int src_fd = open(src_path, O_RDONLY);
-    if (src_fd < 0) {
-        log_error(src_path, strerror(errno), error_buffer, error_offset);
-        (*files_skipped)++;
-        return;
-    }
-
-    int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst_fd < 0) {
-        log_error(dst_path, strerror(errno), error_buffer, error_offset);
-        close(src_fd);
-        (*files_skipped)++;
-        return;
-    }
-
-    char buffer[BUF_SIZE];
-    ssize_t bytes;
-    int success = 1;
-    while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
-        if (write(dst_fd, buffer, bytes) != bytes) {
-            log_error(dst_path, "write error", error_buffer, error_offset);
-            success = 0;
-            break;
-        }
-    }
-
-    if (bytes < 0) {
-        log_error(src_path, "read error", error_buffer, error_offset);
-        success = 0;
-    }
-
-    close(src_fd);
-    close(dst_fd);
-
-    if (success)
-        (*files_copied)++;
-    else
-        (*files_skipped)++;
-}
-
-void do_full_sync(const char *src, const char *dst, 
-    int *files_copied, int *files_skipped, 
-    char *error_buffer, size_t *error_offset) {
-
-    DIR *src_dir = opendir(src);
-    if (!src_dir) {
-        log_error(src, strerror(errno), error_buffer, error_offset);
-        return;
-    }
-
-    struct dirent *entry;
-    char src_path[512], dst_path[512];
-
-    while ((entry = readdir(src_dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-            continue;
-
-        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+    int i = 0;
+    while (i < length) {
+        struct inotify_event *event = (struct inotify_event *)&buffer[i];
+        if (event->mask & (IN_CREATE | IN_MODIFY | IN_DELETE)) {
+            sync_info_mem_store *entry = find_entry_by_watch(event->wd);
+            if (entry && event->len > 0) {
+                Operation op;
+                if (event->mask & IN_CREATE) {
+                    op = OP_ADDED;
+                } else if (event->mask & IN_MODIFY) {
+                    op = OP_MODIFIED;
+                } else if (event->mask & IN_DELETE) {
+                    op = OP_DELETED;
+                }
         
-        int success = 1;
-
-        int src_fd = open(src_path, O_RDONLY);
-        if (src_fd < 0) {
-            log_error(src_path, strerror(errno), error_buffer, error_offset);
-            (*files_skipped)++;
-            continue;
-        }
-
-        int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (dst_fd < 0) {
-            log_error(dst_path, strerror(errno), error_buffer, error_offset);
-            close(src_fd);
-            (*files_skipped)++;
-            continue;
-        }
-
-        char buffer[BUF_SIZE];
-        ssize_t bytes;
-        while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
-            if (write(dst_fd, buffer, bytes) != bytes) {
-                log_error(dst_path, "write error", error_buffer, error_offset);
-                success = 0;
-                break;
+                sync_on_change(entry->source_dir, entry->target_dir, event->name, op, log_fd);
             }
         }
+        i += sizeof(struct inotify_event) + event->len;
+    }
+}
 
-        if (bytes < 0) {
-            log_error(src_path, "read error", error_buffer, error_offset);
-            success = 0;
+//συνάρτηση συγχρονισμού για τις αλλαγές 
+int sync_on_change(const char *src, const char *dst, const char *filename, Operation op, int log_fd){
+    char msg[512];
+    time_t now = time(NULL);
+    char timebuf[64];
+    strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+
+    sync_info_mem_store *entry = sync_list_head;
+    while (entry) {
+        if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
+            if (entry->is_syncing) {
+                snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
+                write(log_fd, msg, strlen(msg));
+                write(STDOUT_FILENO, msg, strlen(msg));
+                return 0; //δεν ξεκινά νέο worker
+            }
+
+            pid_t pid;
+            int err_count = 0;
+            int result = start_worker(src, dst, filename, op, &pid, &err_count, log_fd);
+            if (result > 0) {
+                entry->is_syncing = 0;
+                entry->running_worker_pid = pid;
+                return 0;
+            } else {
+                snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
+                write(log_fd, msg, strlen(msg));
+                write(STDERR_FILENO, msg, strlen(msg));
+                return -1;
+            }
         }
-
-        close(src_fd);
-        close(dst_fd);
-
-        if (success)
-             (*files_copied)++;
-        else
-             (*files_skipped)++;
+        entry = entry->next;
     }
 
-    closedir(src_dir);
+    //αν δεν βρέθηκε το entry:
+    snprintf(msg, sizeof(msg), "%s No sync entry found for %s -> %s\n", timebuf, src, dst);
+    write(log_fd, msg, strlen(msg));
+    write(STDERR_FILENO, msg, strlen(msg));
+    return -1;
 }
 
-void handle_modified(const char *src_dir, const char *dst_dir, const char *filename,
-    int *files_copied, int *files_skipped,
-    char *error_buffer, size_t *error_offset) {
-    //απλώς αντικαθιστά το αρχείο
-    handle_added(src_dir, dst_dir, filename, files_copied, files_skipped, error_buffer, error_offset);
-}
-
-void handle_deleted(const char *dst, const char *filename,
-    int *files_copied, int *files_skipped,
-    char *error_buffer, size_t *error_offset) {
-
-    char dst_path[512];
-    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
-
-    if (unlink(dst_path) < 0) {
-        log_error(dst_path, strerror(errno), error_buffer, error_offset);
-        (*files_skipped)++;
-    } else {
-        (*files_copied)++;  
+//βοηθητική συνάρτηση αναζήτησης στην βάση δεδομένων με κριτήριο το source_dir
+sync_info_mem_store* find_entry_by_source_dir(const char *src) {
+    sync_info_mem_store *curr = sync_list_head;
+    while (curr) {
+        if (strcmp(curr->source_dir, src) == 0) return curr;
+        curr = curr->next;
     }
+    return NULL;
 }
 
-void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const char *status, int copied, int skipped, const char *error_buffer) {
-    char temp[256];
-    snprintf(dest_buffer, buffer_size, "EXEC_REPORT_START\n");
-
-    snprintf(temp, sizeof(temp), "STATUS: %s\n", status);
-    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
-
-    snprintf(temp, sizeof(temp), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
-    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
-
-    if (strlen(error_buffer) > 0) {
-        strncat(dest_buffer, "ERRORS:\n", buffer_size - strlen(dest_buffer) - 1);
-        strncat(dest_buffer, error_buffer, buffer_size - strlen(dest_buffer) - 1);
-    }
-
-    strncat(dest_buffer, "EXEC_REPORT_END\n", buffer_size - strlen(dest_buffer) - 1);
-}
-
-void log_error(const char *path, const char *msg, char *buffer, size_t *offset) {
-    int written = snprintf(buffer + *offset, BUF_SIZE - *offset,
-                           "[%s] %s\n", path, msg);
-    if (written > 0) {
-        *offset += written;
-        if (*offset >= BUF_SIZE)
-            *offset = BUF_SIZE - 1;  // για ασφάλεια
-    }
-}
-
+//συνάρτηση εκκίνησης worker με fork και exec
 int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd) {
     if (active_worker_count >= worker_limit) {
         //ελέγχω μην ξεπεράσουν το όριο
@@ -872,6 +695,18 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
     }
 }
 
+//συνάρτηση μετατροπής enum σε string
+const char* operation_to_string(Operation op) {
+    switch (op) {
+        case OP_FULL: return "FULL";
+        case OP_ADDED: return "ADDED";
+        case OP_MODIFIED: return "MODIFIED";
+        case OP_DELETED: return "DELETED";
+        default: return "UNKNOWN";
+    }
+}
+
+//συνάρτηση απομάκρυνσης του worker που τελείωσε
 void remove_worker_by_pid(pid_t pid, int log_fd) {
     for (int i = 0; i < active_worker_count; i++) {
         if (active_workers[i].pid == pid) {
@@ -892,6 +727,7 @@ void remove_worker_by_pid(pid_t pid, int log_fd) {
     }
 }
 
+//συνάρτηση απομάκρυνσης task (αγνόηση) από την ουρά εργασιών
 void remove_from_pending_queue(const char *src_dir) {
     int count = (queue_end - queue_start + MAX_TASK_QUEUE) % MAX_TASK_QUEUE;
     int removed = 0;
@@ -922,3 +758,193 @@ void remove_from_pending_queue(const char *src_dir) {
 
 
 
+
+//---------------------------FSS_CONSOLE-------------------------------------------
+//συνάρτηση για την χρονοσφραγίδα εκφώνησης
+void get_timestamp(char *buffer, size_t size) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
+}
+
+
+
+//-----------------------------WORKER---------------------------------------------
+//συνάρτηση μετατροπής string σε enum
+Operation parse_operation(const char *op_str) {
+    if (strcmp(op_str, "FULL") == 0) return OP_FULL;
+    if (strcmp(op_str, "ADDED") == 0) return OP_ADDED;
+    if (strcmp(op_str, "MODIFIED") == 0) return OP_MODIFIED;
+    if (strcmp(op_str, "DELETED") == 0) return OP_DELETED;
+
+    fprintf(stderr, "Invalid operation: %s\n", op_str);
+    exit(EXIT_FAILURE);
+}
+
+//συνάρτηση πλήρους συγχρονισμού-αντιγραφή όλων
+void do_full_sync(const char *src, const char *dst, 
+    int *files_copied, int *files_skipped, 
+    char *error_buffer, size_t *error_offset) {
+
+    DIR *src_dir = opendir(src);
+    if (!src_dir) {
+        log_error(src, strerror(errno), error_buffer, error_offset);
+        return;
+    }
+
+    struct dirent *entry;
+    char src_path[512], dst_path[512];
+
+    while ((entry = readdir(src_dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+        
+        int success = 1;
+
+        int src_fd = open(src_path, O_RDONLY);
+        if (src_fd < 0) {
+            log_error(src_path, strerror(errno), error_buffer, error_offset);
+            (*files_skipped)++;
+            continue;
+        }
+
+        int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (dst_fd < 0) {
+            log_error(dst_path, strerror(errno), error_buffer, error_offset);
+            close(src_fd);
+            (*files_skipped)++;
+            continue;
+        }
+
+        char buffer[BUF_SIZE];
+        ssize_t bytes;
+        while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
+            if (write(dst_fd, buffer, bytes) != bytes) {
+                log_error(dst_path, "write error", error_buffer, error_offset);
+                success = 0;
+                break;
+            }
+        }
+
+        if (bytes < 0) {
+            log_error(src_path, "read error", error_buffer, error_offset);
+            success = 0;
+        }
+
+        close(src_fd);
+        close(dst_fd);
+
+        if (success)
+             (*files_copied)++;
+        else
+             (*files_skipped)++;
+    }
+
+    closedir(src_dir);
+}
+
+//συνάρτηση προσθήκης
+void handle_added(const char *src, const char *dst, const char *filename, 
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
+
+    char src_path[512], dst_path[512];
+    snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
+    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
+
+    int src_fd = open(src_path, O_RDONLY);
+    if (src_fd < 0) {
+        log_error(src_path, strerror(errno), error_buffer, error_offset);
+        (*files_skipped)++;
+        return;
+    }
+
+    int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (dst_fd < 0) {
+        log_error(dst_path, strerror(errno), error_buffer, error_offset);
+        close(src_fd);
+        (*files_skipped)++;
+        return;
+    }
+
+    char buffer[BUF_SIZE];
+    ssize_t bytes;
+    int success = 1;
+    while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
+        if (write(dst_fd, buffer, bytes) != bytes) {
+            log_error(dst_path, "write error", error_buffer, error_offset);
+            success = 0;
+            break;
+        }
+    }
+
+    if (bytes < 0) {
+        log_error(src_path, "read error", error_buffer, error_offset);
+        success = 0;
+    }
+
+    close(src_fd);
+    close(dst_fd);
+
+    if (success)
+        (*files_copied)++;
+    else
+        (*files_skipped)++;
+}
+
+//συνάρτηση τροποποίησης (σαν την προσθήκη)
+void handle_modified(const char *src_dir, const char *dst_dir, const char *filename,
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
+    //απλώς αντικαθιστά το αρχείο
+    handle_added(src_dir, dst_dir, filename, files_copied, files_skipped, error_buffer, error_offset);
+}
+
+//συνάρτηση διαγραφής
+void handle_deleted(const char *dst, const char *filename,
+    int *files_copied, int *files_skipped,
+    char *error_buffer, size_t *error_offset) {
+
+    char dst_path[512];
+    snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
+
+    if (unlink(dst_path) < 0) {
+        log_error(dst_path, strerror(errno), error_buffer, error_offset);
+        (*files_skipped)++;
+    } else {
+        (*files_copied)++;  
+    }
+}
+
+//συνάρτηση αποστολής της αναφοράς στον manager 
+void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const char *status, int copied, int skipped, const char *error_buffer) {
+    char temp[256];
+    snprintf(dest_buffer, buffer_size, "EXEC_REPORT_START\n");
+
+    snprintf(temp, sizeof(temp), "STATUS: %s\n", status);
+    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
+
+    snprintf(temp, sizeof(temp), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
+    strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
+
+    if (strlen(error_buffer) > 0) {
+        strncat(dest_buffer, "ERRORS:\n", buffer_size - strlen(dest_buffer) - 1);
+        strncat(dest_buffer, error_buffer, buffer_size - strlen(dest_buffer) - 1);
+    }
+
+    strncat(dest_buffer, "EXEC_REPORT_END\n", buffer_size - strlen(dest_buffer) - 1);
+}
+
+//συνάρτηση που εκτυπώνει τα errors
+void log_error(const char *path, const char *msg, char *buffer, size_t *offset) {
+    int written = snprintf(buffer + *offset, BUF_SIZE - *offset,
+                           "[%s] %s\n", path, msg);
+    if (written > 0) {
+        *offset += written;
+        if (*offset >= BUF_SIZE)
+            *offset = BUF_SIZE - 1;  // για ασφάλεια
+    }
+}
