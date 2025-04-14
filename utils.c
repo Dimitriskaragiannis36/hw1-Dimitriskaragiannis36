@@ -84,22 +84,6 @@ void cleanup_previous_state(const char *logfile) {
     close(fd);
 }
 
-void free_sync_list() {
-    sync_info_mem_store *current = sync_list_head;
-    while (current != NULL) {
-        sync_info_mem_store *next = current->next;
-        free(current);
-        current = next;
-    }
-}
-
-void close_log_file() {
-    if (log_fd != -1) {
-        close(log_fd);
-        log_fd = -1;
-    }
-}
-
 int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd, int inotify_fd)
  {
     char response[1024]; 
