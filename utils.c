@@ -760,7 +760,7 @@ Operation parse_operation(const char *op_str) {
     if (strcmp(op_str, "ADDED") == 0) return OP_ADDED;
     if (strcmp(op_str, "MODIFIED") == 0) return OP_MODIFIED;
     if (strcmp(op_str, "DELETED") == 0) return OP_DELETED;
-
+    //σε περίπτωση λάθους
     fprintf(stderr, "Invalid operation: %s\n", op_str);
     exit(EXIT_FAILURE);
 }
@@ -769,34 +769,36 @@ Operation parse_operation(const char *op_str) {
 void do_full_sync(const char *src, const char *dst, 
     int *files_copied, int *files_skipped, 
     char *error_buffer, size_t *error_offset) {
-
+        //ανοίγω τον src φάκελο
     DIR *src_dir = opendir(src);
     if (!src_dir) {
+        //σε περίπτωση λάθους καλώ την συνάρτηση σφάλματος
         log_error(src, strerror(errno), error_buffer, error_offset);
         return;
     }
 
-    struct dirent *entry;
+    struct dirent *entry; //η δομή φακέλου
     char src_path[512], dst_path[512];
-
+    //αν μπορώ να διαβάσω
     while ((entry = readdir(src_dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-            continue;
+            continue;   //τα αγνοώ ως ειδικές καταχωρήσεις
 
+        //δημιουργώ το πλήρες μονοπάτι   
         snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
         snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
         
         int success = 1;
-
+        //άνοιγμα πλήρους path-αρχείου
         int src_fd = open(src_path, O_RDONLY);
-        if (src_fd < 0) {
+        if (src_fd < 0) {  //περίπτωση λάθους
             log_error(src_path, strerror(errno), error_buffer, error_offset);
             (*files_skipped)++;
             continue;
         }
-
+        //το ανοίγω για γράψιμο καθάρισμα με δικαιώματα rw -r -r
         int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (dst_fd < 0) {
+        if (dst_fd < 0) {  //περίπτωση λάθους
             log_error(dst_path, strerror(errno), error_buffer, error_offset);
             close(src_fd);
             (*files_skipped)++;
@@ -804,7 +806,7 @@ void do_full_sync(const char *src, const char *dst,
         }
 
         char buffer[BUF_SIZE];
-        ssize_t bytes;
+        ssize_t bytes;   //διαβάζω και γράφω
         while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
             if (write(dst_fd, buffer, bytes) != bytes) {
                 log_error(dst_path, "write error", error_buffer, error_offset);
@@ -812,21 +814,22 @@ void do_full_sync(const char *src, const char *dst,
                 break;
             }
         }
-
+        //αν δεν διάβασα τίποτα
         if (bytes < 0) {
             log_error(src_path, "read error", error_buffer, error_offset);
             success = 0;
         }
-
+        //κλείνω τους σχετικούς file descriptors
         close(src_fd);
         close(dst_fd);
 
-        if (success)
+        if (success) //αν μπόρεσα έως εδώ να διαβάσω
              (*files_copied)++;
         else
+        //αλλιώς αυξάνω τα σκιπαρισμένα
              (*files_skipped)++;
     }
-
+    //κλείνω τον φάκελο
     closedir(src_dir);
 }
 
@@ -835,19 +838,19 @@ void handle_added(const char *src, const char *dst, const char *filename,
     int *files_copied, int *files_skipped,
     char *error_buffer, size_t *error_offset) {
 
-    char src_path[512], dst_path[512];
+    char src_path[512], dst_path[512]; //δημιουργώ το πλήρες μονοπάτι
     snprintf(src_path, sizeof(src_path), "%s/%s", src, filename);
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
-
+    //ανοίγω τον φάκελο
     int src_fd = open(src_path, O_RDONLY);
-    if (src_fd < 0) {
+    if (src_fd < 0) {  //περίπτωση λάθους
         log_error(src_path, strerror(errno), error_buffer, error_offset);
         (*files_skipped)++;
         return;
     }
-
+    //το ανοίγω για γράψιμο καθάρισμα με δικαιώματα rw -r -r
     int dst_fd = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst_fd < 0) {
+    if (dst_fd < 0) {  //περίπτωση λάθους
         log_error(dst_path, strerror(errno), error_buffer, error_offset);
         close(src_fd);
         (*files_skipped)++;
@@ -856,23 +859,25 @@ void handle_added(const char *src, const char *dst, const char *filename,
 
     char buffer[BUF_SIZE];
     ssize_t bytes;
-    int success = 1;
+    int success = 1;  //διαβάζω τα bytes
     while ((bytes = read(src_fd, buffer, BUF_SIZE)) > 0) {
         if (write(dst_fd, buffer, bytes) != bytes) {
+            //αλλιώς όχι επιτυχία
             log_error(dst_path, "write error", error_buffer, error_offset);
             success = 0;
             break;
         }
     }
-
+    //άλλο σφάλμα εδώ
     if (bytes < 0) {
         log_error(src_path, "read error", error_buffer, error_offset);
         success = 0;
     }
-
+    //κλείνω τα fd
     close(src_fd);
     close(dst_fd);
 
+    //επιτυχία και αποτυχία αντίστοιχα
     if (success)
         (*files_copied)++;
     else
@@ -883,7 +888,7 @@ void handle_added(const char *src, const char *dst, const char *filename,
 void handle_modified(const char *src_dir, const char *dst_dir, const char *filename,
     int *files_copied, int *files_skipped,
     char *error_buffer, size_t *error_offset) {
-    //απλώς αντικαθιστά το αρχείο
+    //απλώς αντικαθιστά το ήδη υπάρχον αρχείο
     handle_added(src_dir, dst_dir, filename, files_copied, files_skipped, error_buffer, error_offset);
 }
 
@@ -894,8 +899,8 @@ void handle_deleted(const char *dst, const char *filename,
 
     char dst_path[512];
     snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, filename);
-
-    if (unlink(dst_path) < 0) {
+        //ξεσυνδέω το αρχείο
+    if (unlink(dst_path) < 0) { //περίπτωση λάθους
         log_error(dst_path, strerror(errno), error_buffer, error_offset);
         (*files_skipped)++;
     } else {
@@ -907,10 +912,10 @@ void handle_deleted(const char *dst, const char *filename,
 void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const char *status, int copied, int skipped, const char *error_buffer) {
     char temp[256];
     snprintf(dest_buffer, buffer_size, "EXEC_REPORT_START\n");
-
+    //η αναφορά όπως είναι γραμμένη στην εκφώνηση
     snprintf(temp, sizeof(temp), "STATUS: %s\n", status);
     strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
-
+    //συννένωση μέχρι τον μέγιστο αριθμό 
     snprintf(temp, sizeof(temp), "DETAILS: %d files copied, %d skipped\n", copied, skipped);
     strncat(dest_buffer, temp, buffer_size - strlen(dest_buffer) - 1);
 
@@ -925,7 +930,7 @@ void send_exec_report_to_buffer(char *dest_buffer, size_t buffer_size, const cha
 //συνάρτηση που εκτυπώνει τα errors
 void log_error(const char *path, const char *msg, char *buffer, size_t *offset) {
     int written = snprintf(buffer + *offset, BUF_SIZE - *offset,
-                           "[%s] %s\n", path, msg);
+                           "[%s] %s\n", path, msg); //γράφω χωρίς υπερχείλιση
     if (written > 0) {
         *offset += written;
         if (*offset >= BUF_SIZE)
