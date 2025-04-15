@@ -255,63 +255,64 @@ int handle_command(const char *cmd, int pipe_out_fd, int pipe_in_fd, int log_fd,
 
 //συνάρτηση παρακολούθησης καταλόγου με inotify
 int add_watch_entry(int inotify_fd, const char *source, const char *target, int log_fd, int fd_out) {
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
-        if (strcmp(curr->source_dir, source) == 0) {
+    sync_info_mem_store *curr = sync_list_head; //η λίστα curr
+    while (curr) { //όσο υπάρχει στοιχείο
+        if (strcmp(curr->source_dir, source) == 0) { //αν βρει και τα 2
             if (strcmp(curr->target_dir, target) == 0) {
                 if (!curr->active) {
-                    curr->active = 1;
+                    curr->active = 1;  //το κάνει παρακολουθούμενο
                 }
                 char msg[512];
-                time_t now = time(NULL);
-                struct tm *timeinfo = localtime(&now);
-                char time_str[64];
+                time_t now = time(NULL); //τρέχουσα ώρα 
+                struct tm *timeinfo = localtime(&now); //για να έχω πρόσβαση σε όλα τα πεδία
+                char time_str[64]; //το τυπικό formation
                 strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
                 snprintf(msg, sizeof(msg), "%s Already in queue: %s\n", time_str, source);
                 write(fd_out, msg, strlen(msg));
                 return 0;
             } else {
+                //αν ήδη χρησιμοποιείται το source και δώσω άλλο target
                 char msg[512];
-                time_t now = time(NULL);
-                struct tm *timeinfo = localtime(&now); 
-                char time_str[64];
+                time_t now = time(NULL);   //χρήση τρέχουσας ώρας
+                struct tm *timeinfo = localtime(&now); //για να έχω πρόσβαση σε όλα τα πεδία
+                char time_str[64];    //formation
                 strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
                 snprintf(msg, sizeof(msg), "%s Source %s already monitored with different target\n", time_str, source);
                 write(fd_out, msg, strlen(msg));
                 return -1;
             }
         }
-        curr = curr->next;
+        curr = curr->next;  //πάμε στο επόμενο στοιχεί της λίστας
     }
-
+    //βασική συνάρτηση της inotify για το source που θα παρακολουθώ
     int wd = inotify_add_watch(inotify_fd, source, IN_CREATE | IN_MODIFY | IN_DELETE);
     if (wd < 0) {
         perror("inotify_add_watch");
         return -1;
     }
-
+    //δέσμευση μνήμης για νέα entry
     sync_info_mem_store *new_entry = malloc(sizeof(sync_info_mem_store));
     if (!new_entry) {
         perror("malloc");
         return -1;
     }
-
+    //αρχικοποίηση στοιχείων νέας entry
     new_entry->active = 1;
     new_entry->error_count = 0;
     new_entry->is_syncing = 0;
     new_entry->running_worker_pid = -1;
-    
+    //αντιγραφή paths
     strncpy(new_entry->source_dir, source, sizeof(new_entry->source_dir));
     strncpy(new_entry->target_dir, target, sizeof(new_entry->target_dir));
     new_entry->watch_descriptor = wd;
     new_entry->last_sync_time = time(NULL);
-    new_entry->next = sync_list_head;
+    new_entry->next = sync_list_head;       //εισαγωγή νέου κόμβου
     sync_list_head = new_entry;
 
     char msg[512];
-    time_t now = time(NULL);
-    struct tm *timeinfo = localtime(&now); 
-    char time_str[64];
+    time_t now = time(NULL); //χρήση τρέχουσας ώρας 
+    struct tm *timeinfo = localtime(&now); //χρήση δομής χρόνου
+    char time_str[64];      //formation
     strftime(time_str, sizeof(time_str), "[%Y-%m-%d %H:%M:%S]", timeinfo);
     snprintf(msg, sizeof(msg), "%s Added directory: %s -> %s\n%s Monitoring started for %s\n",
     time_str, source, target, time_str, source);
@@ -319,60 +320,61 @@ int add_watch_entry(int inotify_fd, const char *source, const char *target, int 
     write(log_fd, msg, strlen(msg));          
     write(fd_out, msg, strlen(msg));    
 
-    //dprintf(fd_out, "DEBUG: Before perform_initial_sync(%s, %s)\n", source, target);
+    //κλήση συνάρτησης αρχικού συγχρονισμού
     perform_initial_sync(source, target, log_fd);
-    //dprintf(fd_out, "DEBUG: After perform_initial_sync(%s, %s)\n", source, target);
-    new_entry->is_syncing = 0; 
+   
+    new_entry->is_syncing = 0; //αφού τελειώσει 
     return 0;
 }
 
 //συνάρτηση αρχικού συγχρονισμού (από τα ζεύγη του config_file)
 int perform_initial_sync(const char *src, const char *dst, int log_fd) {
     char msg[512];
-    time_t now = time(NULL);
+    time_t now = time(NULL); //χρήση της τρέχουσας ώρας
     char timebuf[64];
 
-    sync_info_mem_store *entry = sync_list_head;
-    while (entry) {
+    sync_info_mem_store *entry = sync_list_head; //χρήση της λίστας με όνομα entry
+    while (entry) {         //αν βρώ σωστά τα src αι trg
         if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
-            if (entry->is_syncing) {
-                now = time(NULL);
+            if (entry->is_syncing) {        //αν συγχρονίζεται
+                now = time(NULL);  //χρήση της τρέχουσας ώρας + formation
                 strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
                 snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             }
-
-            now = time(NULL);
+            //αλλιώς εκτελεί συγχρονισμό
+            now = time(NULL);       //χρήση της τρέχουσας ώρας + formation
             strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
             snprintf(msg, sizeof(msg), "%s Syncing directory: %s -> %s\n", timebuf, src, dst);
             write(log_fd, msg, strlen(msg));
             write(STDOUT_FILENO, msg, strlen(msg));
 
             pid_t pid;
-            int err_count = 0;
+            int err_count = 0;  //για τον συγχρονισμό καλώ την start_worker
             int result = start_worker(src, dst, "ALL", OP_FULL, &pid, &err_count, log_fd);
             if (result > 0) {
-                entry->is_syncing = 0;
-                entry->running_worker_pid = pid;
-                now = time(NULL);
+                entry->is_syncing = 0; //οταν το συγχρονίσει το επιστρέφω στο 0
+                entry->running_worker_pid = pid; //κρατάω το pid με call by reference
+                now = time(NULL);   //χρήση της τρέχουσας ώρας + formation
                 strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
                 snprintf(msg, sizeof(msg), "%s Sync completed %s -> %s Errors:%d\n", timebuf, src, dst, err_count);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0;
             } else {
+                //αλλιώς μήνυμα σφάλματος
                 snprintf(msg, sizeof(msg), "%s Failed to start worker for %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
                 write(STDERR_FILENO, msg, strlen(msg));
                 return -1;
             }
         }
-        entry = entry->next;
+        entry = entry->next;  //πάμε στο επόμενο στοιχείο της λίστας
     }
-
-    //δεν βρέθηκε το entry
+    
+    //δεν βρέθηκε το entry καθόλου
     snprintf(msg, sizeof(msg), "%s No sync entry for %s -> %s\n", timebuf, src, dst);
     write(log_fd, msg, strlen(msg));
     write(STDERR_FILENO, msg, strlen(msg));
@@ -382,31 +384,31 @@ int perform_initial_sync(const char *src, const char *dst, int log_fd) {
 //συνάρτηση διακοπής παρακολούθησης καταλόγου με inotify
 void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pipe_out_fd) {
     char timebuf[64], response[512], log_entry[512];
-    time_t now = time(NULL);
+    time_t now = time(NULL); //χρήση τρέχουσας ώρας και formation
     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
 
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
+    sync_info_mem_store *curr = sync_list_head;  //κορυφή λίστας
+    while (curr) {   //μέχρι να περιέχει στοιχεία
         if (strcmp(curr->source_dir, src_dir) == 0) {
-            if (!curr->active) {
+            if (!curr->active) { //αν βρει το source μη ενεργό
                 snprintf(response, sizeof(response), "%s Directory not monitored: %s\n", timebuf, src_dir);
                 write(pipe_out_fd, response, strlen(response));
                 return;
             }
 
-            //απενεργοποιούμε το watch
+            //απενεργοποιούμε το watch με την βασική της inotify
             inotify_rm_watch(inotify_fd, curr->watch_descriptor);
             curr->active = 0;
 
             snprintf(response, sizeof(response), "%s Monitoring stopped for %s\n", timebuf, src_dir);
             write(pipe_out_fd, response, strlen(response));
-
+            //γράφω στο αρχείο και στην οθόνη
             snprintf(log_entry, sizeof(log_entry), "%s Monitoring stopped for %s\n", timebuf, src_dir);
             write(log_fd, log_entry, strlen(log_entry));
-            remove_from_pending_queue(src_dir);
+            remove_from_pending_queue(src_dir); //κλήση για αφαίρεση εργασίας από την ουρά
             return;
         }
-        curr = curr->next;
+        curr = curr->next;  //επόμενος κόμβος
     }
 
     //αν δεν βρέθηκε καθόλου
@@ -416,10 +418,10 @@ void remove_watch_entry(const char *src_dir, int inotify_fd, int log_fd, int pip
 
 //βοηθητική συνάρτηση αναζήτησης στην βάση δεδομένων με κριτήριο το watch descriptor
 sync_info_mem_store* find_entry_by_watch(int wd) {
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
+    sync_info_mem_store *curr = sync_list_head; //η κορυφή της λίστας
+    while (curr) { //μέχρι να τελειώσει ψάχνω τον wd
         if (curr->watch_descriptor == wd) return curr;
-        curr = curr->next;
+        curr = curr->next; //επόμενος κόμβος
     }
     return NULL;
 }
@@ -427,28 +429,29 @@ sync_info_mem_store* find_entry_by_watch(int wd) {
 //συνάρτηση διαχείρισης αλλαγών μέσω inotify
 void handle_inotify_events(int inotify_fd, int log_fd) {
     char buffer[EVENT_BUF_LEN];
-    int length = read(inotify_fd, buffer, EVENT_BUF_LEN);
-    if (length < 0) return;
+    int length = read(inotify_fd, buffer, EVENT_BUF_LEN); //για event
+    if (length < 0) return; //σε περίπτωση που δεν έχω events
 
     int i = 0;
-    while (i < length) {
+    while (i < length) {   //με το offset &buffer[i] περπατάω στο buffer
         struct inotify_event *event = (struct inotify_event *)&buffer[i];
         if (event->mask & (IN_CREATE | IN_MODIFY | IN_DELETE)) {
             sync_info_mem_store *entry = find_entry_by_watch(event->wd);
-            if (entry && event->len > 0) {
+            if (entry && event->len > 0) { //αφού εντοπίσω το wd
                 Operation op;
-                if (event->mask & IN_CREATE) {
+                if (event->mask & IN_CREATE) { //χρησιμοποιώ άλλο πεδίο της inotify_event
                     op = OP_ADDED;
                 } else if (event->mask & IN_MODIFY) {
                     op = OP_MODIFIED;
                 } else if (event->mask & IN_DELETE) {
                     op = OP_DELETED;
                 }
-        
+                //καλώ την συνάρτηση για συγχρονισμό όταν εντοπίσει την αλλαγή
                 sync_on_change(entry->source_dir, entry->target_dir, event->name, op, log_fd);
             }
         }
-        i += sizeof(struct inotify_event) + event->len;
+        //το βήμα=σταθερό μέγεθος + το len του name[]
+        i += sizeof(struct inotify_event) + event->len; 
     }
 }
 
