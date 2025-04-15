@@ -458,38 +458,39 @@ void handle_inotify_events(int inotify_fd, int log_fd) {
 //συνάρτηση συγχρονισμού για τις αλλαγές 
 int sync_on_change(const char *src, const char *dst, const char *filename, Operation op, int log_fd){
     char msg[512];
-    time_t now = time(NULL);
-    char timebuf[64];
+    time_t now = time(NULL); //χρήση τρέχουσας ώρας
+    char timebuf[64];       //formation εκφώνησης
     strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
 
-    sync_info_mem_store *entry = sync_list_head;
-    while (entry) {
+    sync_info_mem_store *entry = sync_list_head; //η κεφαλή της λίστας
+    while (entry) {     //όσο έχει κόμβους
         if (strcmp(entry->source_dir, src) == 0 && strcmp(entry->target_dir, dst) == 0) {
-            if (entry->is_syncing) {
+            if (entry->is_syncing) { //μόλις βρει και τα 2 + syncing
                 snprintf(msg, sizeof(msg), "%s Sync already in progress %s\n", timebuf, src);
                 write(log_fd, msg, strlen(msg));
                 write(STDOUT_FILENO, msg, strlen(msg));
                 return 0; //δεν ξεκινά νέο worker
             }
-
+            //αλλιώς ξεκινά νέο worker με την start_worker
             pid_t pid;
             int err_count = 0;
             int result = start_worker(src, dst, filename, op, &pid, &err_count, log_fd);
             if (result > 0) {
-                entry->is_syncing = 0;
+                entry->is_syncing = 0; //0 ώστε να ξέρω πως δεν συγχρονίζεται
                 entry->running_worker_pid = pid;
                 return 0;
             } else {
+                //αλλιώς εμφάνισε λάθος 
                 snprintf(msg, sizeof(msg), "%s Failed to start worker for: %s -> %s\n", timebuf, src, dst);
                 write(log_fd, msg, strlen(msg));
                 write(STDERR_FILENO, msg, strlen(msg));
                 return -1;
             }
         }
-        entry = entry->next;
+        entry = entry->next; //πάμε στον επόμενο κόμβο
     }
 
-    //αν δεν βρέθηκε το entry:
+    //αν δεν βρέθηκε το entry: λάθος
     snprintf(msg, sizeof(msg), "%s No sync entry found for %s -> %s\n", timebuf, src, dst);
     write(log_fd, msg, strlen(msg));
     write(STDERR_FILENO, msg, strlen(msg));
@@ -498,10 +499,10 @@ int sync_on_change(const char *src, const char *dst, const char *filename, Opera
 
 //βοηθητική συνάρτηση αναζήτησης στην βάση δεδομένων με κριτήριο το source_dir
 sync_info_mem_store* find_entry_by_source_dir(const char *src) {
-    sync_info_mem_store *curr = sync_list_head;
-    while (curr) {
+    sync_info_mem_store *curr = sync_list_head; //η κεφαλή της λίστας
+    while (curr) {  //όσο έχει στοιχεία ψάχνει το src
         if (strcmp(curr->source_dir, src) == 0) return curr;
-        curr = curr->next;
+        curr = curr->next;  //πάει στον επόμενο κόμβο
     }
     return NULL;
 }
@@ -510,13 +511,13 @@ sync_info_mem_store* find_entry_by_source_dir(const char *src) {
 int start_worker(const char *src, const char *dst, const char *filename, Operation op, pid_t *pid, int *errors, int log_fd) {
     if (active_worker_count >= worker_limit) {
         //ελέγχω μην ξεπεράσουν το όριο
-        int next_end = (queue_end + 1) % MAX_TASK_QUEUE;
+        int next_end = (queue_end + 1) % MAX_TASK_QUEUE; //κυκλική ουρά
         if (next_end == queue_start) {
             fprintf(stderr, "Task queue overflow, dropping task\n");
             return -1;
         }
 
-        //πρόσθεσε στην ουρά
+        //πρόσθεσε στην ουρά τα στοιχεία
         strncpy(task_queue[queue_end].src, src, sizeof(task_queue[queue_end].src));
         strncpy(task_queue[queue_end].dst, dst, sizeof(task_queue[queue_end].dst));
         strncpy(task_queue[queue_end].filename, filename, sizeof(task_queue[queue_end].filename));
@@ -524,63 +525,62 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
         queue_end = next_end;
         return 0;
     }
-
+    //φτιάχνω pipe 
     int to_worker[2], from_worker[2];
     if (pipe(to_worker) == -1 || pipe(from_worker) == -1) {
         perror("pipe");
         return -1;
     }
-
+    //καλώ fork σε δείκτη
     *pid = fork();
     if ( *pid == -1) {
         perror("fork");
         return -1;
     }
-
+    //όταν είμαι στο παιδί-worker
     if ( *pid == 0) {
-        close(to_worker[1]);
-        close(from_worker[0]);
+        close(to_worker[1]); //κλείνω write_end
+        close(from_worker[0]); //κλείνω read_end
     
-        
+        //ανακατευθύνω το stdin στο to_worker[0]
         if (dup2(to_worker[0], STDIN_FILENO) == -1) {
             perror("dup2(STDIN) failed");
             exit(1);
         }
+        //αντί να εκτυπώνω στο stdout, θα εκτυπώνω στο from_worker[1]
         if (dup2(from_worker[1], STDOUT_FILENO) == -1) {
             perror("dup2(STDOUT) failed");
             exit(1);
         }
+        //το ίδιο με πάνω αλλά με το stderr
         if (dup2(from_worker[1], STDERR_FILENO) == -1) {
             perror("dup2(STDERR) failed");
             exit(1);
         }
         
-        close(to_worker[0]);
-        close(from_worker[1]);
+        close(to_worker[0]); //κλείνω ανάγνωση
+        close(from_worker[1]);  //κλείνω γραφή
 
         char op_str[16];
-        switch (op) {
+        switch (op) {  //μετατρέπω το enum σε string
             case OP_FULL: strcpy(op_str, "FULL"); break;
             case OP_ADDED: strcpy(op_str, "ADDED"); break;
             case OP_MODIFIED: strcpy(op_str, "MODIFIED"); break;
             case OP_DELETED: strcpy(op_str, "DELETED"); break;
         }
-
-
-        //fprintf(stderr, "[start_worker] Forked child (pid=%d), calling exec with args:\n", getpid());
-        //fprintf(stderr, "  src = %s\n  dst = %s\n  filename = %s\n  op = %s\n", src, dst, filename, op_str);
-
+        //χρήση exec για διαχωρισμό worker από manager με τα νέα ορίσματα
         execl("./worker", "./worker", src, dst, filename, op_str, NULL);
-        const char *error_msg = "EXEC_FAILED\n";
+        const char *error_msg = "EXEC_FAILED\n"; //εδώ δεν θα πρέπει να φτάσει
         write(STDOUT_FILENO, error_msg, strlen(error_msg));
         perror("exec");
         exit(1);
     } else {
-        close(to_worker[0]);
-        close(from_worker[1]);
+        //εδώ είμαστε στον manager
+        close(to_worker[0]); //κλείνει ανάγνωση
+        close(from_worker[1]);  //κλείνει εγγραφή
 
-        int flags = fcntl(from_worker[0], F_GETFL, 0);
-        fcntl(from_worker[0], F_SETFL, flags | O_NONBLOCK);
+        int flags = fcntl(from_worker[0], F_GETFL, 0); //διαάζω τις ήδη υπάρχουσες σημαίες
+        fcntl(from_worker[0], F_SETFL, flags | O_NONBLOCK);  //κάνω το pipe μη μπλοκαριστικό
         
         char buffer[1024] = {0};
         char temp[256];
@@ -593,39 +593,39 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
             int n = read(from_worker[0], temp, sizeof(temp) - 1);
             if (n <= 0) break;  // Δεν υπάρχει άλλο διαθέσιμο, pipe είναι non-blocking
         
-            temp[n] = '\0';
+            temp[n] = '\0'; //βάζουμε μόνοι μας το null terminator
             if (total_read + n < sizeof(buffer) - 1) {
-                strcat(buffer, temp);
+                strcat(buffer, temp);  //συννένωση συμβολοσειρών
                 total_read += n;
             }
-        
+                //αν η συμβολοσειρά υπάρχει μέσα στο buffer
             if (strstr(buffer, "EXEC_REPORT_END") != NULL) {
                 found_end = 1;
                 break;
             }
         }
-        
+            //αν η συμβολοσειρά υπάρχει μέσα στο buffer
         if (strstr(buffer, "EXEC_FAILED") != NULL) {
-            //fprintf(stderr, "[parent] Detected EXEC_FAILED from worker %d\n", *pid);
+            //κλείνω τα πάντα λόγω σφάλματος
             close(to_worker[1]);
             close(from_worker[0]);
-            waitpid(*pid, NULL, 0);
+            waitpid(*pid, NULL, 0); //περιμένω τον worker να τερματίσει
             return -1;
         }
         
         int local_errors = 0;
 
         if (found_end) {
-            //fprintf(stderr, "[parent] Received full report from worker:\n%s\n", buffer);
+    
             char *err_line = strstr(buffer, "ERRORS:");
-            if (err_line) {
+            if (err_line) { //αν δεν υπάρχει τέτοια γραμμή λάθος
                 sscanf(err_line, "ERRORS:%d", &local_errors);
         
             }
             char *status = NULL, *details = NULL;
-            char *line = strtok(buffer, "\n");
+            char *line = strtok(buffer, "\n"); //χωρίζω το buffer σε γραμμές
 
-            while (line) {
+            while (line) {   //τα πρώτα 7 chr
                 if (strncmp(line, "STATUS:", 7) == 0) {
                     status = line + 7;
                 } else if (strncmp(line, "DETAILS:", 7) == 0) {
@@ -634,52 +634,41 @@ int start_worker(const char *src, const char *dst, const char *filename, Operati
                 line = strtok(NULL, "\n");
             }
 
-            if (status) while (*status == ' ') status++;
+            if (status) while (*status == ' ') status++; //προσπερνάει το κενό
             if (details) while (*details == ' ') details++;
 
-           // if (status && details) {
-                time_t now = time(NULL);
-                struct tm *timeinfo = localtime(&now);
-                char timebuf[64];
-                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", timeinfo);
-                char log_message[1024];
-                snprintf(log_message, sizeof(log_message),
-                "%s [%s] [%s] [%d] [%s] [%s] [%s]\n",
-                timebuf,
-                src,
-                dst,
-                *pid, 
-                operation_to_string(op),
-                status,
-                details);
+           //if (status && details) {
+            time_t now = time(NULL); //χρήση τρέχουσας ώρας 
+            struct tm *timeinfo = localtime(&now);
+            char timebuf[64];   //formation
+            strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", timeinfo);
+            char log_message[1024];
+            snprintf(log_message, sizeof(log_message),
+                "%s [%s] [%s] [%d] [%s] [%s] [%s]\n",  //για να εμφανιστεί το μήνυμα όπως το θέλουμε
+            timebuf,
+            src,
+            dst,
+            *pid, 
+            operation_to_string(op),  //enum->string
+            status,
+            details);
 
-                write(log_fd, log_message, strlen(log_message));
-            /*} else {
-                char timebuf[64];
-                time_t now = time(NULL);
-                struct tm *timeinfo = localtime(&now);
-                strftime(timebuf, sizeof(timebuf), "[%Y-%m-%d %H:%M:%S]", timeinfo);
-        
-                char error_message[256];
-                snprintf(error_message, sizeof(error_message),
-                        "%s Incomplete worker report for file %s\n", timebuf, filename);
-        
-                write(log_fd, error_message, strlen(error_message));
-            }*/
+            write(log_fd, log_message, strlen(log_message));
+
         }
 
         if (errors) *errors = local_errors;
-
+        //ρίσκω την entry βάσει src
         sync_info_mem_store *info = find_entry_by_source_dir(src);
         if (info != NULL) {
-            info->is_syncing = 0;
+            info->is_syncing = 0; //αφού τελειώσει με συγχρονισμό το βάζω 0
         }        
-
+        //αυξάνω τον πίνακα στην δομή
         ActiveWorker *w = &active_workers[active_worker_count++];
         w->pid = *pid;
         w->pipe_write = to_worker[1];
         w->pipe_read = from_worker[0];
-        strncpy(w->src, src, sizeof(w->src));
+        strncpy(w->src, src, sizeof(w->src)); //αντιγράφω τα στοιχεία
         strncpy(w->dst, dst, sizeof(w->dst));
         strncpy(w->filename, filename, sizeof(w->filename));
         w->op = op;
@@ -702,12 +691,14 @@ const char* operation_to_string(Operation op) {
 //συνάρτηση απομάκρυνσης του worker που τελείωσε
 void remove_worker_by_pid(pid_t pid, int log_fd) {
     for (int i = 0; i < active_worker_count; i++) {
-        if (active_workers[i].pid == pid) {
+        if (active_workers[i].pid == pid) { //όταν βρίσκει το pid τα κλείνει ολα
             close(active_workers[i].pipe_read);
             close(active_workers[i].pipe_write);
 
+            //τους μειώνει από τον πίνακα της δομής
             active_workers[i] = active_workers[--active_worker_count];
 
+            //αν υπάρχουν ακόμη εργασίες εκτέλεσε worker
             if (queue_start != queue_end) {
                 WorkerTask *t = &task_queue[queue_start];
                 pid_t new_pid;
@@ -723,7 +714,7 @@ void remove_worker_by_pid(pid_t pid, int log_fd) {
 //συνάρτηση απομάκρυνσης task (αγνόηση) από την ουρά εργασιών
 void remove_from_pending_queue(const char *src_dir) {
     int count = (queue_end - queue_start + MAX_TASK_QUEUE) % MAX_TASK_QUEUE;
-    int removed = 0;
+    int removed = 0;   //εκκρεμή task για να αποφύγω το αρνητικό πρόσιμο σε κυκλική ουρά
 
     int new_end = queue_start;
 
@@ -731,21 +722,21 @@ void remove_from_pending_queue(const char *src_dir) {
         int index = (queue_start + i) % MAX_TASK_QUEUE;
 
         if (!removed && strcmp(task_queue[index].src, src_dir) == 0) {
-            // Skip this task (i.e., remove it)
+            //αν βρω αυτό που θέλω το προσπερνάω
             removed = 1;
             continue;
         }
-
+            //προσπέραση
         task_queue[new_end] = task_queue[index];
         new_end = (new_end + 1) % MAX_TASK_QUEUE;
     }
 
     queue_end = new_end;
 
-    if (removed) {
-        printf("Removed one pending task for %s\n", src_dir);
+    if (removed) {      //σχολιασμένα για να αποφύγω το penalty
+        //printf("Removed one pending task for %s\n", src_dir);
     } else {
-        printf("No pending task for %s\n", src_dir);
+        //printf("No pending task for %s\n", src_dir);
     }
 }
 
@@ -755,8 +746,8 @@ void remove_from_pending_queue(const char *src_dir) {
 //---------------------------FSS_CONSOLE-------------------------------------------
 //συνάρτηση για την χρονοσφραγίδα εκφώνησης
 void get_timestamp(char *buffer, size_t size) {
-    time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    time_t now = time(NULL);  //χρήση τρέχουσας ώρας 
+    struct tm *tm_info = localtime(&now); //χρήση δομής χρόνου + formation
     strftime(buffer, size, "[%Y-%m-%d %H:%M:%S]", tm_info);
 }
 
