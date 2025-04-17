@@ -27,16 +27,30 @@ if [ -d "$path" ] && [ "$command" != "purge" ]; then
 fi
 
 #ένα switch case για τις 4 διαφορετικές εντολές
-case "$command" in
-    purge)
-        echo "Deleting $path..."
-        if [ -d "$path" ] || [ -f "$path" ]; then
-            rm -rf "$path"  #διαγράφω
-            echo "Purge complete."
-        else
-            echo "Error: '$path' not found."
+case "$command" in #μόνο στον φάκελο της εργασίας μου διαγράφει για ασφάλεια
+                    #κάνει και επερώτηση όπως στα linux
+    purge)                 
+        abs_path=$(readlink -f "$path")
+        if [[ "$abs_path" != *"/hw1-Dimitriskaragiannis36/"* ]]; then
+            echo "Error: Only paths inside /hw1-Dimitriskaragiannis36 are allowed for purge."
+            exit 1
         fi
+
+        if [[ ! -e "$abs_path" ]]; then
+            echo "Error: '$abs_path' not found."
+            exit 1
+        fi
+
+        read -p "Are you sure you want to delete this? [y/N] " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Deletion aborted."
+            exit 1
+        fi
+
+        rm -rf "$abs_path"
+        echo "Purge complete."
         ;;
+
                 #awk για parsing, timestamp, source, target κτλ
                 #gensub αντικαθιστά την κανονική έκφραση με κείμενο
                 #getline η επόμενη γραμμή
